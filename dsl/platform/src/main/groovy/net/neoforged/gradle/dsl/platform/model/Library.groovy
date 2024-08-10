@@ -38,7 +38,7 @@ abstract class Library extends WithRules<Library> {
 
             artifact.path.set("${group.toString().replace('.', '/')}/${module}/${version}/${module}-${version}".toString() + (classifier == '' ? '' : '-' + classifier) + '.jar')
             artifact.url.set(
-                    ("https://maven.neoforged.net/releases/${project.group.toString().replace('.', '/')}/${project.name}/${project.version}/${project.name}-${project.version.toString() + (classifier == '' ? '' : '-' + classifier)}" + '.jar').toString()
+                    ("https://repo.magmafoundation.org/releases/${project.group.toString().replace('.', '/')}/${project.name}/${project.version}/${project.name}-${project.version.toString() + (classifier == '' ? '' : '-' + classifier)}" + '.jar').toString()
             )
             artifact.sha1.set(task.output.map { file ->
                 HashFunction.SHA1.hash(file.asFile)

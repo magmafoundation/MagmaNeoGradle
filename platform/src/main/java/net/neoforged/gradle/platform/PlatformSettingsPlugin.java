@@ -24,8 +24,8 @@ public class PlatformSettingsPlugin implements Plugin<Settings> {
             spec.repositories(repositories -> {
                 repositories.gradlePluginPortal();
                 repositories.maven(mavenConfig -> {
-                    mavenConfig.setUrl("https://maven.neoforged.net/releases");
-                    mavenConfig.setName("NeoForged");
+                    mavenConfig.setUrl("https://repo.magmafoundation.org/releases/");
+                    mavenConfig.setName("Magma");
                 });
                 repositories.mavenLocal();
             });

@@ -34,7 +34,7 @@ class LibraryCollector extends ModuleIdentificationVisitor {
     );
 
     private static final URI MOJANG_MAVEN = URI.create("https://libraries.minecraft.net")
-    private static final URI NEOFORGED_MAVEN = URI.create("https://maven.neoforged.net/releases")
+    private static final URI NEOFORGED_MAVEN = URI.create("https://repo.magmafoundation.org/releases")
 
     private final ObjectFactory objectFactory;
     private final List<URI> repositoryUrls

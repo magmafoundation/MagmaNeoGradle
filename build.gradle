@@ -12,7 +12,7 @@ gradleutils {
     version {
         branches {
             suffixBranch()
-            suffixExemptedBranch('NG_7.0')
+            suffixExemptedBranch('MNG_71.0')
         }
     }
 }
@@ -51,8 +51,6 @@ subprojects.forEach { Project subProject ->
     subProject.apply plugin: 'eclipse'
     subProject.apply plugin: 'idea'
 
-    gradleutils.setupSigning(project: subProject, signAllPublications: true)
-
     //General project metadata. Everything has the same version and group.
     subProject.version = subProject.rootProject.version
     subProject.group = 'net.neoforged.gradle'
@@ -81,8 +79,8 @@ subprojects.forEach { Project subProject ->
     //Wire up our custom repositories.
     subProject.repositories.mavenLocal()
     subProject.repositories.maven { MavenArtifactRepository repository ->
-        repository.name 'NeoForged'
-        repository.url = 'https://maven.neoforged.net/releases'
+        repository.name 'Magma'
+        repository.url = 'https://repo.magmafoundation.org/releases'
     }
     subProject.repositories.gradlePluginPortal()
 
