@@ -37,7 +37,7 @@ tasks.register('info') {
 }
 
 changelog {
-    from "7.0"
+    from "71.0"
     disableAutomaticPublicationRegistration()
 }
 
