@@ -363,8 +363,12 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 task.from(project.zipTree(strippedJar.flatMap(WithOutput::getOutput)));
                 task.manifest(manifest -> {
                     manifest.attributes(ImmutableMap.of("FML-System-Mods", "neoforge"));
-                    manifest.attributes(ImmutableMap.of("Specification-Title", "NeoForge", "Specification-Vendor", "NeoForge", "Specification-Version", project.getVersion().toString().substring(0, project.getVersion().toString().lastIndexOf(".")), "Implementation-Title", project.getGroup(), "Implementation-Version", project.getVersion(), "Implementation-Vendor", "NeoForged"), "net/neoforged/neoforge/internal/versions/neoforge/");
+                    // get neoforgeVersion version from a variable in gradle.properties
+                    final String neoforgeVersion = project.getRootProject().getProperties().get("neoforgeVersion").toString();
+                    manifest.attributes(ImmutableMap.of("Specification-Title", "NeoForge", "Specification-Vendor", "NeoForge", "Specification-Version", neoforgeVersion.substring(0, project.getVersion().toString().lastIndexOf(".")), "Implementation-Title", "net.neoforged", "Implementation-Version", neoforgeVersion, "Implementation-Vendor", "NeoForged"), "net/neoforged/neoforge/internal/versions/neoforge/");
                     manifest.attributes(ImmutableMap.of("Specification-Title", "Minecraft", "Specification-Vendor", "Mojang", "Specification-Version", runtimeDefinition.getSpecification().getMinecraftVersion(), "Implementation-Title", "MCP", "Implementation-Version", runtimeDefinition.getSpecification().getVersion(), "Implementation-Vendor", "NeoForged"), "net/neoforged/neoforge/versions/neoform/");
+                    // Magma Neo - org.magmafoundation.magma
+                    manifest.attributes(ImmutableMap.of("Specification-Title", "Magma", "Specification-Vendor", "MagmaFoundation", "Specification-Version", project.getVersion().toString().substring(0, project.getVersion().toString().lastIndexOf(".")), "Implementation-Title", project.getGroup(), "Implementation-Version", project.getVersion(), "Implementation-Vendor", "MagmaFoundation"), "org/magmafoundation/magma/");
                 });
 
                 task.configuration(jarJarConfiguration);
