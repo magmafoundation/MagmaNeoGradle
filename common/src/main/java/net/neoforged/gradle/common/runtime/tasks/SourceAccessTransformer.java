@@ -41,7 +41,7 @@ public abstract class SourceAccessTransformer extends DefaultExecute {
                                 }
                                 builder.append(f.getAbsolutePath());
                             });
-                            args.add("--classpath=" + builder.toString());
+                            args.add("--classpath=" + builder);
 
                             args.add(inputFile.getAsFile().getAbsolutePath());
                             args.add(outputFile.getAbsolutePath());

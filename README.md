@@ -28,6 +28,31 @@ dependencies {
 }
 ```
 
+#### <a id="userdev-access-transformer" /> Access Transformers
+The userdev plugin provides a way to configure access transformers for your mod.
+You need to create an access transformer configuration file in your resources directory, and then configure the userdev plugin to use it.
+```groovy
+userdev {
+    accessTransformer {
+        file 'src/main/resources/META-INF/accesstransformer.cfg'
+    }
+}
+```
+The path here is up to you, and does not need to be included in your final jar.
+
+#### <a id="userdev-interface-injections" /> Interface Injections
+The userdev plugin provides a way to configure interface injections for your mod.
+This allows you to have a decompiled minecraft artifact that contains the interfaces you want to inject via mixins already statically applied.
+The advantage of this approach is that you can use the interfaces in your code, and the mixins will be applied to the interfaces, and not the classes that implement them.
+```groovy   
+userdev {
+    interfaceInjection {
+        file 'src/main/resources/META-INF/interfaceinjection.json'
+    }
+}
+```
+You can find more information on the format of the file [here](https://github.com/neoforged/JavaSourceTransformer?tab=readme-ov-file#interface-injection).
+
 #### Dependency management by the userdev plugin
 When this plugin detects a dependency on NeoForge, it will spring into action and create the necessary NeoForm runtime tasks to build a usable Minecraft JAR-file that contains the requested NeoForge version.
 It additionally (if configured to do so via conventions, which is the default) will create runs for your project, and add the necessary dependencies to the classpath of the run.

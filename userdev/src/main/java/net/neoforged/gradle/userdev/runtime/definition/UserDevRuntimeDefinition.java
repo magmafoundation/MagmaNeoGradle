@@ -18,6 +18,7 @@ import net.neoforged.gradle.userdev.runtime.tasks.ClasspathSerializer;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.artifacts.result.ResolvedArtifactResult;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.FileTree;
 import org.gradle.api.file.RegularFile;
 import org.gradle.api.provider.MapProperty;
@@ -103,11 +104,15 @@ public final class UserDevRuntimeDefinition extends CommonRuntimeDefinition<User
     }
 
     @Override
+    public @NotNull FileCollection getAdditionalRecompileDependencies() {
+        return neoformRuntimeDefinition.getAdditionalRecompileDependencies();
+    }
+
+    @Override
     protected void buildRunInterpolationData(RunImpl run, @NotNull MapProperty<String, String> interpolationData) {
         neoformRuntimeDefinition.buildRunInterpolationData(run, interpolationData);
 
         if (userdevConfiguration.getModules() != null && !userdevConfiguration.getModules().get().isEmpty()) {
-            final String name = String.format("moduleResolverForgeUserDev%s", getSpecification().getVersionedName());
             final Configuration modulesCfg = ConfigurationUtils
                     .temporaryUnhandledConfiguration(
                             getSpecification().getProject().getConfigurations(),
@@ -132,9 +137,9 @@ public final class UserDevRuntimeDefinition extends CommonRuntimeDefinition<User
                     final Configuration lcpConfiguration = ConfigurationUtils.temporaryConfiguration(getSpecification().getProject(),
                             RunsUtil.createNameFor("lcp", run));
 
-                    lcpConfiguration.extendsFrom(neoformRuntimeDefinition.getMinecraftDependenciesConfiguration());
-                    lcpConfiguration.extendsFrom(this.additionalUserDevDependencies);
-                    lcpConfiguration.extendsFrom(run.getDependencies().getRuntimeConfiguration());
+                    ConfigurationUtils.extendsFrom(run.getProject(), lcpConfiguration, neoformRuntimeDefinition.getMinecraftDependenciesConfiguration());
+                    ConfigurationUtils.extendsFrom(run.getProject(), lcpConfiguration, this.additionalUserDevDependencies);
+                    ConfigurationUtils.extendsFrom(run.getProject(), lcpConfiguration, run.getDependencies().getRuntimeConfiguration());
 
                     //We depend on the configuration, this ensures that if we have dependencies with different versions in the
                     //dependency tree they are resolved to one version and are not added with different versions to the ConfigurableFileCollection

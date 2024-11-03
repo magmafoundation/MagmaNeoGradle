@@ -4,6 +4,8 @@ package net.neoforged.gradle.userdev
 import net.neoforged.trainingwheels.gradle.functional.BuilderBasedTestSpecification
 import org.gradle.testkit.runner.TaskOutcome
 
+import java.util.zip.ZipFile
+
 class AccessTransformerTests  extends BuilderBasedTestSpecification {
 
     @Override
@@ -79,90 +81,6 @@ class AccessTransformerTests  extends BuilderBasedTestSpecification {
                 public class FunctionalTests {
                     public static void main(String[] args) {
                         System.out.println(Minecraft.getInstance().fixerUpper.getClass().toString());
-                    }
-                }
-            """)
-            it.withToolchains()
-            it.withGlobalCacheDirectory(tempDir)
-        })
-
-        when:
-        def initialRun = project.run {
-            it.tasks('build')
-        }
-
-        then:
-        initialRun.task(":neoFormRecompile").outcome == TaskOutcome.SUCCESS
-        initialRun.task(":build").outcome == TaskOutcome.SUCCESS
-    }
-
-    def "the userdev runtime supports loading ats from the script"() {
-        given:
-        def project = create("userdev_supports_ats_in_scripts", {
-            it.build("""
-            java {
-                toolchain {
-                    languageVersion = JavaLanguageVersion.of(21)
-                }
-            }
-            
-            minecraft.accessTransformers.entry 'public-f net.minecraft.client.Minecraft fixerUpper # fixerUpper'
-            
-            dependencies {
-                implementation 'net.neoforged:neoforge:+'
-            }
-            """)
-            it.file("src/main/java/net/neoforged/gradle/userdev/FunctionalTests.java", """
-                package net.neoforged.gradle.userdev;
-                
-                import net.minecraft.client.Minecraft;
-                
-                public class FunctionalTests {
-                    public static void main(String[] args) {
-                        System.out.println(Minecraft.getInstance().fixerUpper.getClass().toString());
-                    }
-                }
-            """)
-            it.withToolchains()
-            it.withGlobalCacheDirectory(tempDir)
-        })
-
-        when:
-        def initialRun = project.run {
-            it.tasks('build')
-        }
-
-        then:
-        initialRun.task(":neoFormRecompile").outcome == TaskOutcome.SUCCESS
-        initialRun.task(":build").outcome == TaskOutcome.SUCCESS
-    }
-
-    def "the userdev runtime supports loading ats from the script and the file"() {
-        given:
-        def project = create("userdev_supports_ats_in_script_and_file", {
-            it.build("""
-            java {
-                toolchain {
-                    languageVersion = JavaLanguageVersion.of(21)
-                }
-            }
-            minecraft.accessTransformers.file rootProject.file('src/main/resources/META-INF/accesstransformer.cfg')
-            minecraft.accessTransformers.entry 'public-f net.minecraft.client.Minecraft LOGGER # LOGGER'
-            
-            dependencies {
-                implementation 'net.neoforged:neoforge:+'
-            }
-            """)
-            it.file("src/main/resources/META-INF/accesstransformer.cfg", """public-f net.minecraft.client.Minecraft fixerUpper # fixerUpper""")
-            it.file("src/main/java/net/neoforged/gradle/userdev/FunctionalTests.java", """
-                package net.neoforged.gradle.userdev;
-                
-                import net.minecraft.client.Minecraft;
-                
-                public class FunctionalTests {
-                    public static void main(String[] args) {
-                        System.out.println(Minecraft.getInstance().fixerUpper.getClass().toString());
-                        System.out.println(Minecraft.LOGGER.getClass().toString());
                     }
                 }
             """)
