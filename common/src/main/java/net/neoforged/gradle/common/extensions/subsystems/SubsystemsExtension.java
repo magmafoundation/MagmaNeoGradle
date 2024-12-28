@@ -82,6 +82,9 @@ public abstract class SubsystemsExtension extends WithPropertyLookup implements 
         tools.getJarSplitter().convention(
                 getStringProperty("tools.jarSplitter", JARSPLITTER_TOOL_ARTIFACT)
         );
+        tools.getDecompiler().convention(
+                getStringProperty("tools.decompiler", DECOMPILER_TOOL_ARTIFACT)
+        );
 
         RenderDocTools renderDocTools = tools.getRenderDoc();
         renderDocTools.getRenderDocPath().convention(

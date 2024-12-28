@@ -16,6 +16,7 @@ class Constants {
     public static final String FART_TOOL_ARTIFACT = "net.neoforged:AutoRenamingTool:2.0.4:all"
     public static final String INSTALLERTOOLS_TOOL_ARTIFACT = "net.neoforged.installertools:installertools:2.1.7"
     public static final String JARSPLITTER_TOOL_ARTIFACT = "net.neoforged.installertools:jarsplitter:2.1.7"
+    public static final String DECOMPILER_TOOL_ARTIFACT = "org.vineflower:vineflower:1.10.1"
 
     public static final String DEFAULT_RECOMPILER_MAX_MEMORY = "1g"
 
