@@ -5,13 +5,14 @@ import groovy.transform.CompileStatic
 import net.minecraftforge.gdi.ConfigurableDSLElement
 import net.minecraftforge.gdi.NamedDSLElement
 import net.minecraftforge.gdi.annotations.DSLProperty
+import net.neoforged.gradle.dsl.common.runs.RunSpecification
+import net.neoforged.gradle.dsl.common.runs.run.Run
 import org.gradle.api.Named
-import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.model.ObjectFactory
-import org.gradle.api.provider.ListProperty
-import org.gradle.api.provider.MapProperty
-import org.gradle.api.provider.Property
-import org.gradle.api.tasks.*
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.Nested
+import org.gradle.api.tasks.Optional
+import org.jetbrains.annotations.Nullable
 
 import javax.inject.Inject
 import java.lang.reflect.Type
@@ -25,9 +26,11 @@ import static net.neoforged.gradle.dsl.common.util.PropertyUtils.*
  * However, for pure vanilla these objects are created in memory specifically for the run.
  */
 @CompileStatic
-abstract class RunType implements ConfigurableDSLElement<RunType>, NamedDSLElement, Named {
+abstract class RunType implements ConfigurableDSLElement<RunType>, NamedDSLElement, Named, RunSpecification {
 
     private final String name
+
+    private Run runTemplate;
 
     @Inject
     RunType(String name) {
@@ -51,124 +54,33 @@ abstract class RunType implements ConfigurableDSLElement<RunType>, NamedDSLEleme
     }
 
     /**
-     * Indicates if the run type is only allowed to run once at a time.
+     * A run template provides an ability for common projects that define their own run to define a template
      *
-     * @return The property which indicates if this is a single instance run type.
-     */
-    @Input
-    @DSLProperty
-    abstract Property<Boolean> getIsSingleInstance();
-
-    /**
-     * Gives access to the name of the main class on the run type.
-     *
-     * @return The property which holds the main class name.
-     */
-    @DSLProperty
-    @Input
-    abstract Property<String> getMainClass();
-
-    /**
-     * Gives access to the application arguments for the run type.
-     *
-     * @return The property which holds the application arguments.
-     */
-    @DSLProperty
-    @Input
-    abstract ListProperty<String> getArguments();
-
-    /**
-     * Gives access to the JVM arguments for the run type.
-     *
-     * @return The property which holds the JVM arguments.
-     */
-    @DSLProperty
-    @Input
-    abstract ListProperty<String> getJvmArguments();
-
-    /**
-     * Indicates if this run type is for the client.
-     *
-     * @return The property which indicates if this is a client run type.
-     */
-    @DSLProperty(propertyName = 'client')
-    @Input
-    abstract Property<Boolean> getIsClient();
-
-    /**
-     * Indicates if this run is a server run.
-     *
-     * @return {@code true} if this run is a server run; otherwise, {@code false}.
-     */
-    @DSLProperty(propertyName = 'server')
-    @Input
-    abstract Property<Boolean> getIsServer();
-
-    /**
-     * Indicates if this run is a JUnit run.
-     *
-     * @return {@code true} if this run is a JUnit run; otherwise, {@code false}.
-     */
-    @DSLProperty(propertyName = 'junit')
-    @Input
-    abstract Property<Boolean> getIsJUnit();
-
-    /**
-     * Indicates if this run is a data generation run.
-     *
-     * @return {@code true} if this run is a data generation run; otherwise, {@code false}.
-     */
-    @DSLProperty(propertyName = 'dataGenerator')
-    @Input
-    abstract Property<Boolean> getIsDataGenerator();
-
-    /**
-     * Indicates if this run is a game test run.
-     *
-     * @return {@code true} if this run is a game test run; otherwise, {@code false}.
-     */
-    @Input
-    @DSLProperty(propertyName = 'gameTest')
-    abstract Property<Boolean> getIsGameTest();
-
-    /**
-     * Gives access to the key value pairs which are added as environment variables when an instance of this run type is executed.
-     *
-     * @return The property which holds the environment variables.
-     */
-    @DSLProperty
-    @Input
-    abstract MapProperty<String, String> getEnvironmentVariables();
-
-    /**
-     * Gives access to the key value pairs which are added as system properties when an instance of this run type is executed.
-     *
-     * @return The property which holds the system properties.
-     */
-    @DSLProperty
-    @Input
-    abstract MapProperty<String, String> getSystemProperties();
-
-    /**
-     * Gives access to the classpath for this run type.
-     * Does not contain the full classpath since that is dependent on the actual run environment, but contains the additional classpath elements
-     * needed to run the game with this run type.
-     *
-     * @return The property which holds the classpath.
-     */
-    @DSLProperty
-    @InputFiles
-    @PathSensitive(PathSensitivity.NONE)
-    abstract ConfigurableFileCollection getClasspath();
-
-    /**
-     * An optional configurable run adapter which can be used to change the behaviour of already configured runs when the type is applied to them.
-     *
-     * @return The run adapter.
+     * @return The run template
      */
     @Internal
     @DSLProperty
-    abstract Property<RunAdapter> getRunAdapter();
+    Run getRunTemplate() {
+        return runTemplate
+    }
+
+    void setRunTemplate(Run runTemplate) {
+        this.runTemplate = runTemplate
+
+        if (this.runTemplate != null) {
+            runTemplate.getConfigureAutomatically().set(false)
+            runTemplate.getConfigureFromDependencies().set(false)
+            runTemplate.getConfigureFromTypeWithName().set(false)
+
+            runTemplate.configure(this);
+
+            runTemplate.isClient.set(isClient)
+            runTemplate.isServer.set(isServer)
+            runTemplate.isDataGenerator.set(isDataGenerator)
+            runTemplate.isGameTest.set(isGameTest)
+            runTemplate.isJUnit.set(isJUnit)
+        }
+    }
 
     /**
      * Copies this run type into a new instance.
@@ -188,6 +100,12 @@ abstract class RunType implements ConfigurableDSLElement<RunType>, NamedDSLEleme
         other.getEnvironmentVariables().set(getEnvironmentVariables())
         other.getSystemProperties().set(getSystemProperties())
         other.getClasspath().from(getClasspath())
+
+        if (runTemplate != null && other.getRunTemplate() != null) {
+            other.getRunTemplate().configure(runTemplate)
+        } else if (runTemplate == null) {
+            other.setRunTemplate(null)
+        }
     }
 
     /**

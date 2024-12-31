@@ -1,12 +1,14 @@
 package net.neoforged.gradle.common.dependency;
 
 import net.neoforged.gradle.common.extensions.JarJarExtension;
+import net.neoforged.gradle.common.extensions.problems.IProblemReporter;
 import net.neoforged.gradle.dsl.common.dependency.DependencyFilter;
 import net.neoforged.gradle.dsl.common.dependency.DependencyManagementObject;
 import net.neoforged.gradle.dsl.common.dependency.DependencyVersionInformationHandler;
 import net.neoforged.jarjar.metadata.ContainedJarIdentifier;
 import org.apache.maven.artifact.versioning.InvalidVersionSpecificationException;
 import org.apache.maven.artifact.versioning.VersionRange;
+import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.component.ComponentSelector;
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier;
@@ -32,6 +34,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -39,6 +42,7 @@ public abstract class JarJarArtifacts {
     private transient final SetProperty<ResolvedComponentResult> includedRootComponents;
     private transient final SetProperty<ResolvedArtifactResult> includedArtifacts;
 
+    private final IProblemReporter reporter;
     private final DependencyFilter dependencyFilter;
     private final DependencyVersionInformationHandler dependencyVersionInformationHandler;
 
@@ -69,7 +73,9 @@ public abstract class JarJarArtifacts {
         return dependencyVersionInformationHandler;
     }
 
-    public JarJarArtifacts() {
+    @Inject
+    public JarJarArtifacts(IProblemReporter reporter) {
+        this.reporter = reporter;
         dependencyFilter = getObjectFactory().newInstance(DefaultDependencyFilter.class);
         dependencyVersionInformationHandler = getObjectFactory().newInstance(DefaultDependencyVersionInformationHandler.class);
         includedRootComponents = getObjectFactory().setProperty(ResolvedComponentResult.class);
@@ -101,7 +107,7 @@ public abstract class JarJarArtifacts {
         }
     }
 
-    private static List<ResolvedJarJarArtifact> getIncludedJars(DependencyFilter filter, DependencyVersionInformationHandler versionHandler, Set<ResolvedComponentResult> rootComponents, Set<ResolvedArtifactResult> artifacts) {
+    private List<ResolvedJarJarArtifact> getIncludedJars(DependencyFilter filter, DependencyVersionInformationHandler versionHandler, Set<ResolvedComponentResult> rootComponents, Set<ResolvedArtifactResult> artifacts) {
         Map<ContainedJarIdentifier, String> versions = new HashMap<>();
         Map<ContainedJarIdentifier, String> versionRanges = new HashMap<>();
         Set<ContainedJarIdentifier> knownIdentifiers = new HashSet<>();
@@ -141,6 +147,14 @@ public abstract class JarJarArtifacts {
 
             if (version != null && versionRange != null) {
                 data.add(new ResolvedJarJarArtifact(result.getFile(), version, versionRange, jarIdentifier.group(), jarIdentifier.artifact()));
+            } else {
+                throw reporter.throwing(spec ->
+                        spec.id("jarjar", "no-version-range")
+                                .contextualLabel("Missing version range for " + jarIdentifier.group() + ":" + jarIdentifier.artifact())
+                                .solution("Ensure that the version is defined in the dependency management block or that the dependency is included in the JarJar configuration")
+                                .details("The version for " + jarIdentifier.group() + ":" + jarIdentifier.artifact() + " could not be determined")
+                                .section("common-jar-in-jar-publishing")
+                );
             }
         }
         return data.stream()
@@ -148,20 +162,24 @@ public abstract class JarJarArtifacts {
                 .collect(Collectors.toList());
     }
 
-    private static void collectFromComponent(ResolvedComponentResult rootComponent, Set<ContainedJarIdentifier> knownIdentifiers, Map<ContainedJarIdentifier, String> versions, Map<ContainedJarIdentifier, String> versionRanges) {
+    private void collectFromComponent(ResolvedComponentResult rootComponent, Set<ContainedJarIdentifier> knownIdentifiers, Map<ContainedJarIdentifier, String> versions, Map<ContainedJarIdentifier, String> versionRanges) {
         for (DependencyResult result : rootComponent.getDependencies()) {
-            if (!(result instanceof ResolvedDependencyResult)) {
+            if (!(result instanceof ResolvedDependencyResult resolvedResult)) {
                 continue;
             }
-            ResolvedDependencyResult resolvedResult = (ResolvedDependencyResult) result;
             ComponentSelector requested = resolvedResult.getRequested();
-            ResolvedVariantResult variant = resolvedResult.getResolvedVariant();
-
+            ResolvedVariantResult originalVariant = resolvedResult.getResolvedVariant();
+            ResolvedVariantResult variant = originalVariant;
+            // We do this to account for any available-at usage in module metadata -- the actual artifact will only have
+            // the module ID of the final target of available-at, but the resolved dependency lets us get the whole
+            // hierarchy.
+            while (variant.getExternalVariant().isPresent()) {
+                variant = variant.getExternalVariant().get();
+            }
             DependencyManagementObject.ArtifactIdentifier artifactIdentifier = capabilityOrModule(variant);
             if (artifactIdentifier == null) {
                 continue;
             }
-
             ContainedJarIdentifier jarIdentifier = new ContainedJarIdentifier(artifactIdentifier.getGroup(), artifactIdentifier.getName());
             knownIdentifiers.add(jarIdentifier);
 
@@ -174,7 +192,8 @@ public abstract class JarJarArtifacts {
                     versionRange = requestedModule.getVersionConstraint().getRequiredVersion();
                 } else if (isValidVersionRange(requestedModule.getVersionConstraint().getPreferredVersion())) {
                     versionRange = requestedModule.getVersionConstraint().getPreferredVersion();
-                } if (isValidVersionRange(requestedModule.getVersion())) {
+                }
+                if (isValidVersionRange(requestedModule.getVersion())) {
                     versionRange = requestedModule.getVersion();
                 }
             }
@@ -183,6 +202,18 @@ public abstract class JarJarArtifacts {
             }
 
             String version = getVersionFrom(variant);
+            String originalVersion = getVersionFrom(originalVariant);
+
+            if (!Objects.equals(version, originalVersion)) {
+                throw reporter.throwing(spec ->
+                        spec.id("jarjar", "version-mismatch")
+                                .contextualLabel("Version mismatch for " + originalVariant.getOwner())
+                                .solution("Consider depending on the available-at target directly")
+                                .details("Version mismatch for " + originalVariant.getOwner() + ": available-at directs to " +
+                                        version + " but original is " + originalVersion + " which jarJar cannot handle well")
+                                .section("common-jar-in-jar-publishing-moves-and-collisions")
+                );
+            }
 
             if (version != null) {
                 versions.put(jarIdentifier, version);

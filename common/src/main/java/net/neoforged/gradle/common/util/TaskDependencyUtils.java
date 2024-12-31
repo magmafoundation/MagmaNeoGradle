@@ -10,7 +10,6 @@ import net.neoforged.gradle.dsl.common.runtime.definition.Definition;
 import net.neoforged.gradle.dsl.common.util.Artifact;
 import org.gradle.api.Buildable;
 import org.gradle.api.Project;
-import org.gradle.api.ProjectConfigurationException;
 import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.Dependency;
@@ -233,12 +232,12 @@ public final class TaskDependencyUtils {
         }
 
         private void processConfiguration(Configuration configuration) {
-            DependencySet dependencies = configuration.getAllDependencies();
+            DependencySet dependencies = configuration.getDependencies();
 
             //Grab the original dependencies if we have a replacement extension
             final DependencyReplacement replacement = project.getExtensions().findByType(DependencyReplacement.class);
             final Set<Dependency> operatingSet = replacement == null ? dependencies : dependencies.stream()
-                    .map(dependency -> replacement.optionallyConvertBackToOriginal(dependency, configuration))
+                    .map(replacement::optionallyConvertBackToOriginal)
                     .collect(Collectors.toSet());
 
             this.runtimes.stream()
@@ -251,6 +250,8 @@ public final class TaskDependencyUtils {
                     return false;
                 }
             }).forEach(this::add);
+
+            configuration.getExtendsFrom().forEach(this::add);
         }
 
         private void processSourceDirectorySet(SourceDirectorySet sourceDirectorySet) {

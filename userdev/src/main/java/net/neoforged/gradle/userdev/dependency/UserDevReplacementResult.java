@@ -10,13 +10,13 @@ import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.Dependency;
 import org.gradle.api.artifacts.ExternalModuleDependency;
 import org.gradle.api.tasks.TaskProvider;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.Set;
 
 /**
  * Special replacement result for userdev dependencies.
- * Is needed because userdev needs to know where the neoforge jar is, so it can put it on the classpath
+ * Is needed because userdev needs to know where the neoforge jar is, so it can put it on the classpathm
+ * additionally we need to be notified when somebody registers us as a dependency and add the runtypes.
  */
 public class UserDevReplacementResult extends ReplacementResult implements ReplacementAware {
 
@@ -25,10 +25,11 @@ public class UserDevReplacementResult extends ReplacementResult implements Repla
     public UserDevReplacementResult(Project project,
                                     TaskProvider<? extends WithOutput> sourcesJar,
                                     TaskProvider<? extends WithOutput> rawJar,
+                                    Configuration sdk,
                                     Configuration dependencies,
                                     Set<TaskProvider<? extends Task>> additionalTasks,
                                     UserDevRuntimeDefinition definition) {
-        super(project, sourcesJar, rawJar, dependencies, additionalTasks);
+        super(project, sourcesJar, rawJar, sdk, dependencies, additionalTasks);
 
         this.definition = definition;
     }

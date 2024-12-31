@@ -6,10 +6,8 @@ import net.neoforged.gradle.common.runtime.definition.CommonRuntimeDefinition;
 import net.neoforged.gradle.common.runtime.definition.IDelegatingRuntimeDefinition;
 import net.neoforged.gradle.common.runtime.tasks.DownloadAssets;
 import net.neoforged.gradle.common.runtime.tasks.ExtractNatives;
-import net.neoforged.gradle.common.util.VersionJson;
+import net.neoforged.gradle.common.util.ConfigurationUtils;
 import net.neoforged.gradle.common.util.run.RunsUtil;
-import net.neoforged.gradle.dsl.common.extensions.dependency.replacement.DependencyReplacement;
-import net.neoforged.gradle.dsl.common.extensions.repository.Repository;
 import net.neoforged.gradle.dsl.common.runtime.definition.Definition;
 import net.neoforged.gradle.dsl.common.tasks.WithOutput;
 import net.neoforged.gradle.dsl.userdev.configurations.UserdevProfile;
@@ -19,7 +17,11 @@ import net.neoforged.gradle.userdev.runtime.specification.UserDevRuntimeSpecific
 import net.neoforged.gradle.userdev.runtime.tasks.ClasspathSerializer;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.Dependency;
+import org.gradle.api.artifacts.result.ResolvedArtifactResult;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.file.FileTree;
+import org.gradle.api.file.RegularFile;
+import org.gradle.api.provider.MapProperty;
 import org.gradle.api.tasks.TaskProvider;
 import org.jetbrains.annotations.NotNull;
 
@@ -102,53 +104,64 @@ public final class UserDevRuntimeDefinition extends CommonRuntimeDefinition<User
     }
 
     @Override
-    protected Map<String, String> buildRunInterpolationData(RunImpl run) {
-        final Map<String, String> interpolationData = neoformRuntimeDefinition.buildRunInterpolationData(run);
+    public @NotNull FileCollection getAdditionalRecompileDependencies() {
+        return neoformRuntimeDefinition.getAdditionalRecompileDependencies();
+    }
+
+    @Override
+    protected void buildRunInterpolationData(RunImpl run, @NotNull MapProperty<String, String> interpolationData) {
+        neoformRuntimeDefinition.buildRunInterpolationData(run, interpolationData);
 
         if (userdevConfiguration.getModules() != null && !userdevConfiguration.getModules().get().isEmpty()) {
-            final String name = String.format("moduleResolverForgeUserDev%s", getSpecification().getVersionedName());
-            final Configuration modulesCfg;
-            if (getSpecification().getProject().getConfigurations().getNames().contains(name)) {
-                modulesCfg = getSpecification().getProject().getConfigurations().getByName(name);
-            } else {
-                modulesCfg = getSpecification().getProject().getConfigurations().create(name);
-                modulesCfg.setCanBeResolved(true);
-                userdevConfiguration.getModules().get().forEach(m -> modulesCfg.getDependencies().add(getSpecification().getProject().getDependencies().create(m)));
-            }
+            final Configuration modulesCfg = ConfigurationUtils
+                    .temporaryUnhandledConfiguration(
+                            getSpecification().getProject().getConfigurations(),
+                            String.format("moduleResolverForgeUserDev%s", getSpecification().getVersionedName()),
+                            userdevConfiguration.getModules().map(
+                                    modules -> modules.stream().map(
+                                            m -> getSpecification().getProject().getDependencies().create(m)
+                                    ).collect(Collectors.toList())
+                            )
+                    );
 
-            interpolationData.put("modules", modulesCfg.resolve().stream().map(File::getAbsolutePath).collect(Collectors.joining(File.pathSeparator)));
+            interpolationData.put("modules", modulesCfg.getIncoming().getArtifacts().getResolvedArtifacts().map(artifacts -> artifacts.stream()
+                    .map(ResolvedArtifactResult::getFile)
+                    .map(File::getAbsolutePath)
+                    .collect(Collectors.joining(File.pathSeparator))));
         }
 
         final TaskProvider<ClasspathSerializer> minecraftClasspathSerializer = getSpecification().getProject().getTasks().register(
-                RunsUtil.createTaskName("writeMinecraftClasspath", run),
+                RunsUtil.createNameFor("writeMinecraftClasspath", run),
                 ClasspathSerializer.class,
                 task -> {
-                    this.additionalUserDevDependencies.getExtendsFrom().forEach(task.getInputFiles()::from);
-                    task.getInputFiles().from(this.additionalUserDevDependencies);
-                    task.getInputFiles().from(neoformRuntimeDefinition.getMinecraftDependenciesConfiguration());
-                    task.getInputFiles().from(this.userdevClasspathElementProducer.flatMap(WithOutput::getOutput));
+                    final Configuration lcpConfiguration = ConfigurationUtils.temporaryConfiguration(getSpecification().getProject(),
+                            RunsUtil.createNameFor("lcp", run));
 
-                    Configuration userDependencies = run.getDependencies().get().getRuntimeConfiguration();
-                    task.getInputFiles().from(userDependencies);
+                    ConfigurationUtils.extendsFrom(run.getProject(), lcpConfiguration, neoformRuntimeDefinition.getMinecraftDependenciesConfiguration());
+                    ConfigurationUtils.extendsFrom(run.getProject(), lcpConfiguration, this.additionalUserDevDependencies);
+                    ConfigurationUtils.extendsFrom(run.getProject(), lcpConfiguration, run.getDependencies().getRuntimeConfiguration());
+
+                    //We depend on the configuration, this ensures that if we have dependencies with different versions in the
+                    //dependency tree they are resolved to one version and are not added with different versions to the ConfigurableFileCollection
+                    //on the input files.
+                    //Additionally, we need to directly depend on the output file of the userdevClasspathElementProducer, we can not convert
+                    //this to a dependency because it would be a transform of a configurable file collection that holds the output of the task
+                    //which requires running that task, which would be a cyclic dependency.
+                    //This is a workaround to ensure that the path to the userdev classpath element is resolved correctly.
+                    //And added to the LCP, as we are now not transforming the CFC created from the output (we are not even creating a CFC)
+                    task.getInputFiles().from(lcpConfiguration);
+                    task.getInputFiles().from(this.userdevClasspathElementProducer.flatMap(WithOutput::getOutput));
                 }
         );
         configureAssociatedTask(minecraftClasspathSerializer);
+        interpolationData.put("minecraft_classpath_file", minecraftClasspathSerializer.flatMap(ClasspathSerializer::getTargetFile).map(RegularFile::getAsFile).map(File::getAbsolutePath));
 
-        interpolationData.put("minecraft_classpath_file", minecraftClasspathSerializer.get().getOutput().get().getAsFile().getAbsolutePath());
-
-        run.dependsOn(minecraftClasspathSerializer);
-
-        return interpolationData;
+        run.getPostSyncTasks().add(minecraftClasspathSerializer);
     }
 
     @Override
     public Definition<?> getDelegate() {
         return neoformRuntimeDefinition;
-    }
-
-    @Override
-    public @NotNull VersionJson getVersionJson() {
-        return getNeoFormRuntimeDefinition().getVersionJson();
     }
 
     public TaskProvider<? extends WithOutput> getUserdevClasspathElementProducer() {

@@ -12,17 +12,22 @@ import net.neoforged.gradle.common.dependency.ExtraJarDependencyManager;
 import net.neoforged.gradle.common.extensions.IdeManagementExtension;
 import net.neoforged.gradle.common.extensions.JarJarExtension;
 import net.neoforged.gradle.common.runtime.extensions.CommonRuntimeExtension;
-import net.neoforged.gradle.common.runtime.tasks.AccessTransformerFileGenerator;
+import net.neoforged.gradle.common.runtime.tasks.DefaultExecute;
 import net.neoforged.gradle.common.runtime.tasks.DownloadAssets;
 import net.neoforged.gradle.common.tasks.JarJar;
-import net.neoforged.gradle.common.tasks.WriteIMappingsFile;
 import net.neoforged.gradle.common.tasks.PotentiallySignJar;
+import net.neoforged.gradle.common.tasks.WriteIMappingsFile;
 import net.neoforged.gradle.common.util.CacheableIMappingFile;
-import net.neoforged.gradle.common.util.constants.RunsConstants;
+import net.neoforged.gradle.common.util.ConfigurationUtils;
+import net.neoforged.gradle.common.util.ToolUtilities;
 import net.neoforged.gradle.dsl.common.extensions.AccessTransformers;
 import net.neoforged.gradle.dsl.common.extensions.Mappings;
+import net.neoforged.gradle.dsl.common.extensions.subsystems.Subsystems;
+import net.neoforged.gradle.dsl.common.extensions.subsystems.Tools;
 import net.neoforged.gradle.dsl.common.runs.run.Run;
+import net.neoforged.gradle.dsl.common.runs.run.RunManager;
 import net.neoforged.gradle.dsl.common.runs.type.RunType;
+import net.neoforged.gradle.dsl.common.runs.type.RunTypeManager;
 import net.neoforged.gradle.dsl.common.runtime.naming.TaskBuildingContext;
 import net.neoforged.gradle.dsl.common.runtime.tasks.Runtime;
 import net.neoforged.gradle.dsl.common.tasks.WithOutput;
@@ -36,6 +41,7 @@ import net.neoforged.gradle.neoform.NeoFormProjectPlugin;
 import net.neoforged.gradle.neoform.runtime.definition.NeoFormRuntimeDefinition;
 import net.neoforged.gradle.neoform.runtime.extensions.NeoFormRuntimeExtension;
 import net.neoforged.gradle.neoform.runtime.tasks.Download;
+import net.neoforged.gradle.neoform.runtime.tasks.PackJar;
 import net.neoforged.gradle.neoform.runtime.tasks.UnpackZip;
 import net.neoforged.gradle.neoform.util.NeoFormRuntimeUtils;
 import net.neoforged.gradle.platform.PlatformDevProjectPlugin;
@@ -45,7 +51,6 @@ import net.neoforged.gradle.platform.runtime.runtime.extension.RuntimeDevRuntime
 import net.neoforged.gradle.platform.runtime.runtime.specification.RuntimeDevRuntimeSpecification;
 import net.neoforged.gradle.platform.runtime.runtime.tasks.GenerateBinaryPatches;
 import net.neoforged.gradle.platform.runtime.runtime.tasks.GenerateSourcePatches;
-import net.neoforged.gradle.neoform.runtime.tasks.PackJar;
 import net.neoforged.gradle.platform.tasks.*;
 import net.neoforged.gradle.platform.util.ArtifactPathsCollector;
 import net.neoforged.gradle.platform.util.SetupUtils;
@@ -55,7 +60,6 @@ import net.neoforged.gradle.vanilla.runtime.VanillaRuntimeDefinition;
 import net.neoforged.gradle.vanilla.runtime.extensions.VanillaRuntimeExtension;
 import org.apache.commons.lang3.StringUtils;
 import org.gradle.api.Action;
-import org.gradle.api.NamedDomainObjectContainer;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
 import org.gradle.api.artifacts.Configuration;
@@ -85,80 +89,106 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import static net.neoforged.gradle.dsl.common.util.Constants.DEFAULT_PARCHMENT_ARTIFACT_PREFIX;
+import static net.neoforged.gradle.dsl.common.util.Constants.DEFAULT_PARCHMENT_GROUP;
+
 public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicProjectExtension> {
-    
+
     private final Project project;
-    
+
     @Nullable
     private DynamicProjectType type = null;
-    
+
     @Inject
     public DynamicProjectExtension(Project project) {
         this.project = project;
         this.getIsUpdating().convention(getProviderFactory().gradleProperty("updating").map(Boolean::valueOf).orElse(false));
-        
+
         //All dynamic projects expose information from themselves as a library. Cause they are.
         project.getPlugins().apply("java-library");
     }
-    
+
     @ProjectGetter
     @Override
     public Project getProject() {
         return project;
     }
-    
+
     public void clean() {
         clean("+");
     }
-    
+
     public void clean(final String minecraftVersion) {
         type = DynamicProjectType.CLEAN;
-        
+
         project.getPlugins().apply(VanillaProjectPlugin.class);
-        
+
         final JavaPluginExtension javaPluginExtension = getProject().getExtensions().getByType(JavaPluginExtension.class);
         final SourceSet mainSource = javaPluginExtension.getSourceSets().getByName("main");
-        
+
         final VanillaRuntimeExtension vanillaRuntimeExtension = project.getExtensions().getByType(VanillaRuntimeExtension.class);
-        final VanillaRuntimeDefinition runtimeDefinition = vanillaRuntimeExtension.create(builder -> builder.withMinecraftVersion(minecraftVersion).withDistributionType(DistributionType.CLIENT).withFartVersion(vanillaRuntimeExtension.getFartVersion()).withForgeFlowerVersion(vanillaRuntimeExtension.getVineFlowerVersion()).withAccessTransformerApplierVersion(vanillaRuntimeExtension.getAccessTransformerApplierVersion()));
-        
+        final VanillaRuntimeDefinition runtimeDefinition = vanillaRuntimeExtension.create(builder -> builder.withMinecraftVersion(minecraftVersion).withDistributionType(DistributionType.CLIENT));
+
         project.getTasks().named(mainSource.getCompileJavaTaskName()).configure(task -> task.setEnabled(false));
-        
+
         configureSetupTasks(runtimeDefinition.getSourceJarTask().flatMap(WithOutput::getOutput), mainSource, runtimeDefinition.getMinecraftDependenciesConfiguration());
     }
-    
+
     public void neoform() {
         //Accept any version of NeoForm. Aka the latest will always work.
         neoform("+");
     }
-    
+
     public void neoform(final String neoFormVersion) {
         type = DynamicProjectType.NEO_FORM;
-        
+
         project.getPlugins().apply(NeoFormProjectPlugin.class);
-        
+
         final JavaPluginExtension javaPluginExtension = getProject().getExtensions().getByType(JavaPluginExtension.class);
         final SourceSet mainSource = javaPluginExtension.getSourceSets().getByName("main");
-        
+
         final NeoFormRuntimeExtension neoFormRuntimeExtension = project.getExtensions().getByType(NeoFormRuntimeExtension.class);
         final NeoFormRuntimeDefinition runtimeDefinition = neoFormRuntimeExtension.create(builder -> {
-            builder.withNeoFormVersion(neoFormVersion).withDistributionType(DistributionType.CLIENT);
-            
+            builder.withNeoFormVersion(neoFormVersion).withDistributionType(DistributionType.JOINED);
+
             NeoFormRuntimeUtils.configureDefaultRuntimeSpecBuilder(project, builder);
         });
-        
-        configureSetupTasks(runtimeDefinition.getSourceJarTask().flatMap(WithOutput::getOutput), mainSource, runtimeDefinition.getMinecraftDependenciesConfiguration());
+
+        final var parchmentArtifact = getParchment().map(parch -> {
+            var split = parch.split("-");
+            return DEFAULT_PARCHMENT_GROUP
+                    + ":" + DEFAULT_PARCHMENT_ARTIFACT_PREFIX + split[0]
+                    + ":" + split[1]
+                    + "@zip";
+        });
+
+        TaskProvider<? extends WithOutput> sourcesTask = runtimeDefinition.getSourceJarTask();
+        if (parchmentArtifact.isPresent()) {
+            sourcesTask = RuntimeDevRuntimeExtension.applyParchment(
+                    getProject(),
+                    "applyParchment",
+                    getProject().provider(() -> ToolUtilities.resolveTool(getProject(), parchmentArtifact.get())),
+                    getProject().provider(() -> "p_"),
+                    sourcesTask.flatMap(WithOutput::getOutput).map(RegularFile::getAsFile),
+                    true,
+                    runtimeDefinition.getSpecification(),
+                    project.getLayout().getBuildDirectory().dir(String.format("neoForm/%s", neoFormVersion)).get().getAsFile(),
+                    null
+            );
+        }
+
+        configureSetupTasks(sourcesTask.flatMap(WithOutput::getOutput), mainSource, runtimeDefinition.getMinecraftDependenciesConfiguration());
     }
-    
+
     public void runtime(final String neoFormVersion) {
         runtime(neoFormVersion, project.getRootProject().getLayout().getProjectDirectory().dir("patches"), project.getRootProject().getLayout().getProjectDirectory().dir("rejects"));
     }
-    
+
     public void runtime(final String neoFormVersion, Directory patches, Directory rejects) {
         type = DynamicProjectType.RUNTIME;
-        
+
         project.getPlugins().apply(PlatformDevProjectPlugin.class);
-        
+
         final JavaPluginExtension javaPluginExtension = getProject().getExtensions().getByType(JavaPluginExtension.class);
         final SourceSet mainSource = javaPluginExtension.getSourceSets().getByName("main");
 
@@ -173,23 +203,32 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
         // we need the actual version it was resolved to. Otherwise the NeoForm version used by installer & userdev could change over time.
         String neoformDependency = "net.neoforged:neoform:" + neoFormRuntimeDefinition.getSpecification().getVersion() + "@zip";
 
+        final var parchmentArtifact = getParchment().map(parch -> {
+            var split = parch.split("-");
+            return DEFAULT_PARCHMENT_GROUP
+                    + ":" + DEFAULT_PARCHMENT_ARTIFACT_PREFIX + split[0]
+                    + ":" + split[1]
+                    + "@zip";
+        });
+
         final RuntimeDevRuntimeExtension runtimeDevRuntimeExtension = project.getExtensions().getByType(RuntimeDevRuntimeExtension.class);
         final RuntimeDevRuntimeDefinition runtimeDefinition = runtimeDevRuntimeExtension.create(builder -> {
             builder.withNeoFormRuntime(neoFormRuntimeDefinition)
                     .withPatchesDirectory(patches)
                     .withRejectsDirectory(rejects)
                     .withDistributionType(DistributionType.JOINED)
+                    .withParchment(parchmentArtifact)
                     .isUpdating(getIsUpdating());
         });
-        
+
         project.getExtensions().add("runtime", runtimeDefinition);
-        
+
         final IdeManagementExtension ideManagementExtension = project.getExtensions().getByType(IdeManagementExtension.class);
         ideManagementExtension.registerTaskToRun(runtimeDefinition.getAssets());
         ideManagementExtension.registerTaskToRun(runtimeDefinition.getNatives());
-        
+
         final File workingDirectory = getProject().getLayout().getBuildDirectory().dir(String.format("platform/%s", runtimeDefinition.getSpecification().getIdentifier())).get().getAsFile();
-        
+
         final Configuration clientExtraConfiguration = project.getConfigurations().create("clientExtra");
         final Configuration serverExtraConfiguration = project.getConfigurations().create("serverExtra");
         final Configuration installerConfiguration = project.getConfigurations().create("installer");
@@ -202,63 +241,81 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
         final Configuration jarJarConfiguration = project.getConfigurations().create("jarJar");
 
         clientExtraConfiguration.getDependencies().add(project.getDependencies().create(ExtraJarDependencyManager.generateClientCoordinateFor(runtimeDefinition.getSpecification().getMinecraftVersion())));
-        
+
         serverExtraConfiguration.getDependencies().add(project.getDependencies().create(ExtraJarDependencyManager.generateServerCoordinateFor(runtimeDefinition.getSpecification().getMinecraftVersion())));
-        
+
         installerLibrariesConfiguration.extendsFrom(installerConfiguration);
         installerLibrariesConfiguration.getDependencies().add(project.getDependencyFactory().create(neoformDependency));
-        
+
         project.getConfigurations().getByName(mainSource.getApiConfigurationName()).extendsFrom(gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration, installerConfiguration);
         project.getConfigurations().getByName(mainSource.getRuntimeClasspathConfigurationName()).extendsFrom(clientExtraConfiguration);
-        
-        project.getExtensions().configure(RunsConstants.Extensions.RUN_TYPES, (Action<NamedDomainObjectContainer<RunType>>) types -> types.configureEach(type -> configureRunType(project, type, moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration, runtimeDefinition)));
-        project.getExtensions().configure(RunsConstants.Extensions.RUNS, (Action<NamedDomainObjectContainer<Run>>) runs -> runs.configureEach(run -> configureRun(run, runtimeDefinition)));
+
+        project.getExtensions().configure(RunTypeManager.class, types -> types.configureEach(type -> configureRunType(project, type, moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration, runtimeDefinition)));
+        project.getExtensions().configure(RunManager.class,  runs -> runs.configureAll(run -> configureRun(run, runtimeDefinition)));
 
         project.getExtensions().create(net.neoforged.gradle.dsl.common.extensions.JarJar.class, JarJarExtension.EXTENSION_NAME, JarJarExtension.class, project);
 
         final LauncherProfile launcherProfile = project.getExtensions().create(LauncherProfile.class, "launcherProfile", LauncherProfile.class);
         final InstallerProfile installerProfile = project.getExtensions().create("installerProfile", InstallerProfile.class);
         final UserdevProfile userdevProfile = project.getExtensions().create("userdevProfile", UserdevProfile.class, project.getObjects());
-        
+
         final TaskProvider<SetupProjectFromRuntime> setupTask = configureSetupTasks(runtimeDefinition.getSourceJarTask().flatMap(WithOutput::getOutput), mainSource, runtimeDefinition.getMinecraftDependenciesConfiguration());
         setupTask.configure(task -> task.getShouldLockDirectories().set(false));
-        
+
         project.afterEvaluate(evaledProject -> {
             final EnumMap<DistributionType, TaskProvider<? extends WithOutput>> cleanProviders = new EnumMap<>(DistributionType.class);
             cleanProviders.put(DistributionType.CLIENT, createCleanProvider(runtimeDefinition.getGameArtifactProvidingTasks().get(GameArtifact.CLIENT_JAR), runtimeDefinition, workingDirectory));
             cleanProviders.put(DistributionType.SERVER, createCleanProvider(runtimeDefinition.getJoinedNeoFormRuntimeDefinition().getTask("extractServer"), runtimeDefinition, workingDirectory));
             cleanProviders.put(DistributionType.JOINED, runtimeDefinition.getJoinedNeoFormRuntimeDefinition().getTask("rename"));
-            
+
             final EnumMap<DistributionType, TaskProvider<? extends WithOutput>> obfToMojMappingProviders = new EnumMap<>(DistributionType.class);
             final TaskProvider<? extends WithOutput> clientInverseMappings = createFlippedMojMapProvider(runtimeDefinition.getGameArtifactProvidingTasks().get(GameArtifact.CLIENT_MAPPINGS), runtimeDefinition, workingDirectory);
             final TaskProvider<? extends WithOutput> serverInverseMappings = createFlippedMojMapProvider(runtimeDefinition.getGameArtifactProvidingTasks().get(GameArtifact.SERVER_MAPPINGS), runtimeDefinition, workingDirectory);
             obfToMojMappingProviders.put(DistributionType.CLIENT, clientInverseMappings);
             obfToMojMappingProviders.put(DistributionType.SERVER, serverInverseMappings);
             obfToMojMappingProviders.put(DistributionType.JOINED, clientInverseMappings);
-            
+
             final TaskProvider<? extends WithOutput> neoFormSources = runtimeDefinition.getJoinedNeoFormRuntimeDefinition().getSourceJarTask();
-            
+
             final TaskProvider<? extends WithOutput> packChanges = project.getTasks().register("packForgeChanges", PackJar.class, task -> {
                 task.getInputFiles().from(SetupUtils.getSetupSourceTarget(getProject()));
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
+
             final TaskProvider<? extends GenerateSourcePatches> createPatches = project.getTasks().register("createSourcePatches", GenerateSourcePatches.class, task -> {
-                task.getBase().set(neoFormSources.flatMap(WithOutput::getOutput));
+                task.getBase().set(runtimeDefinition.getPatchBase().flatMap(WithOutput::getOutput));
                 task.getModified().set(packChanges.flatMap(WithOutput::getOutput));
-                
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
+
             final TaskProvider<? extends UnpackZip> unpackZip = project.getTasks().register("unpackSourcePatches", UnpackZip.class, task -> {
                 task.getInput().from(project.zipTree(createPatches.flatMap(WithOutput::getOutput)));
                 task.getUnpackingTarget().set(patches);
-                
+                task.dependsOn(createPatches);
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
-            final TaskProvider<? extends Jar> compiledJarProvider = project.getTasks().named(mainSource.getJarTaskName(), Jar.class);
-            
+
+            var mergeMappings = runtimeDefinition.getJoinedNeoFormRuntimeDefinition().getTask("mergeMappings");
+            Provider<RegularFile> compiledJarProvider;
+            if (parchmentArtifact.isPresent()) {
+                var officialWithParams = project.getTasks().register(CommonRuntimeUtils.buildTaskName(runtimeDefinition, "officialMappingsJustParameters"), OfficialMappingsJustParameters.class, tsk -> {
+                    tsk.getInput().set(mergeMappings.flatMap(WithOutput::getOutput));
+                    tsk.dependsOn(mergeMappings);
+
+                    CommonRuntimeExtension.configureCommonRuntimeTaskParameters(tsk, runtimeDefinition, workingDirectory);
+                });
+                compiledJarProvider = renameCompiledJar(
+                        officialWithParams,
+                        project.getTasks().named(mainSource.getJarTaskName(), Jar.class),
+                        runtimeDefinition,
+                        workingDirectory
+                );
+            } else {
+                compiledJarProvider = project.getTasks().named(mainSource.getJarTaskName(), Jar.class).flatMap(Jar::getArchiveFile);
+            }
+
             javaPluginExtension.withSourcesJar();
             final TaskProvider<? extends Jar> sourcesJarProvider = project.getTasks().named(mainSource.getSourcesJarTaskName(), Jar.class);
             sourcesJarProvider.configure(task ->  {
@@ -266,20 +323,20 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 task.exclude("com/**");
                 task.exclude("mcp/**");
             });
-            
+
             final EnumMap<DistributionType, TaskProvider<GenerateBinaryPatches>> binaryPatchGenerators = new EnumMap<>(DistributionType.class);
             for (DistributionType distribution : DistributionType.values()) {
                 final TaskProvider<? extends WithOutput> cleanProvider = cleanProviders.get(distribution);
                 final TaskProvider<GenerateBinaryPatches> generateBinaryPatchesTask = project.getTasks().register(distribution.createTaskName("generate", "BinaryPatches"), GenerateBinaryPatches.class, task -> {
                     task.getClean().set(cleanProvider.flatMap(WithOutput::getOutput));
-                    task.getPatched().set(compiledJarProvider.flatMap(Jar::getArchiveFile));
+                    task.getPatched().set(compiledJarProvider);
                     task.getDistributionType().set(distribution);
                     task.getPatches().from(patches);
                     task.getMappings().set(obfToMojMappingProviders.get(distribution).flatMap(WithOutput::getOutput));
-                    
+
                     task.mustRunAfter(unpackZip);
                     task.mustRunAfter(setupTask);
-                    
+
                     CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
                 });
                 binaryPatchGenerators.put(distribution, generateBinaryPatchesTask);
@@ -297,15 +354,15 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 profile.getType().set("release");
                 profile.getMainClass().set("cpw.mods.bootstraplauncher.BootstrapLauncher");
                 profile.getInheritsFrom().set(runtimeDefinition.getSpecification().getMinecraftVersion());
-                
+
                 //TODO: Deal with logging when model for it stands
                 profile.getLoggingConfiguration().set(project.getObjects().newInstance(LauncherProfile.LoggingConfiguration.class));
-                
+
                 final LauncherProfile.Arguments arguments = launcherProfile.getArguments().get();
-                
+
                 arguments.game("--launchTarget");
                 arguments.game("forgeclient");
-                
+
                 arguments.jvm("-Djava.net.preferIPv6Addresses=system");
                 arguments.jvm(createIgnoreList(project, moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration).map(ignoreList -> "-DignoreList=" + ignoreList + ",${version_name}.jar"));
                 arguments.jvm("-DmergeModules=jna-5.10.0.jar,jna-platform-5.10.0.jar");
@@ -313,9 +370,9 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 arguments.jvm(collectFileNames(gameLayerLibraryConfiguration, project).map(gameLayerLibraries -> "-Dfml.gameLayerLibraries=" + gameLayerLibraries));
                 arguments.jvm("-DlibraryDirectory=${library_directory}");
                 arguments.jvm("-p");
-                
+
                 arguments.jvm(collectFilePaths(moduleOnlyConfiguration, "${library_directory}/", "${classpath_separator}", project));
-                
+
                 arguments.jvm("--add-modules");
                 arguments.jvm("ALL-MODULE-PATH");
                 arguments.jvm("--add-opens");
@@ -326,30 +383,37 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 arguments.jvm("java.base/sun.security.util=cpw.mods.securejarhandler");
                 arguments.jvm("--add-exports");
                 arguments.jvm("jdk.naming.dns/com.sun.jndi.dns=java.naming");
-                
+
                 launcherProfile.getArguments().set(arguments);
             });
 
+            final Configuration installerRuntimeLibrariesConfiguration = ConfigurationUtils.temporaryUnhandledConfiguration(
+                    project.getConfigurations(),
+                    "InstallerRuntimeLibraries"
+            );
+            ConfigurationUtils.extendsFrom(project, installerRuntimeLibrariesConfiguration, installerConfiguration);
+            installerRuntimeLibrariesConfiguration.shouldResolveConsistentlyWith(runtimeClasspath);
+            
             final ListProperty<URI> repoCollection = new RepositoryCollection(project.getProviders(), project.getObjects(), project.getRepositories()).getURLs();
             final TaskProvider<CreateLauncherJson> createLauncherJson = project.getTasks().register("createLauncherJson", CreateLauncherJson.class, task -> {
                 task.getProfile().set(launcherProfile);
-                task.getLibraries().from(installerConfiguration);
+                task.getLibraries().from(installerRuntimeLibrariesConfiguration);
                 task.getLibraries().from(pluginLayerLibraryConfiguration);
                 task.getLibraries().from(gameLayerLibraryConfiguration);
                 task.getLibraries().from(moduleOnlyConfiguration);
                 task.getRepositoryURLs().set(repoCollection);
-                
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
+
             final TaskProvider<? extends WithOutput> joinedCleanProvider = cleanProviders.get(DistributionType.JOINED);
             final TaskProvider<StripBinPatchedClasses> strippedJar = project.getTasks().register("stripBinaryPatchedClasses", StripBinPatchedClasses.class, task -> {
                 task.getCompiled().set(project.getTasks().named(mainSource.getJarTaskName(), Jar.class).flatMap(Jar::getArchiveFile));
                 task.getClean().set(joinedCleanProvider.flatMap(WithOutput::getOutput));
-                
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
+
             final TaskProvider<JarJar> universalJar = project.getTasks().register("universalJar", JarJar.class, task -> {
                 task.getArchiveClassifier().set("universal-unsigned");
                 task.getArchiveAppendix().set("universal-unsigned");
@@ -357,9 +421,9 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 task.getArchiveBaseName().set(project.getName());
                 task.getDestinationDirectory().set(project.getLayout().getBuildDirectory().dir("libs"));
                 task.getArchiveFileName().set(project.provider(() -> String.format("%s-%s-universal-unsigned.jar", project.getName(), project.getVersion())));
-                
+
                 task.dependsOn(strippedJar);
-                
+
                 task.from(project.zipTree(strippedJar.flatMap(WithOutput::getOutput)));
                 task.manifest(manifest -> {
                     manifest.attributes(ImmutableMap.of("FML-System-Mods", "neoforge"));
@@ -373,14 +437,15 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
 
                 task.configuration(jarJarConfiguration);
             });
-            
+
             final TaskProvider<PotentiallySignJar> signUniversalJar = project.getTasks().register("signUniversalJar", PotentiallySignJar.class, task -> {
                 task.getInput().set(universalJar.flatMap(Jar::getArchiveFile));
                 task.getOutputFileName().set(project.provider(() -> String.format("%s-%s-universal.jar", project.getName(), project.getVersion())));
-                
+
                 task.dependsOn(universalJar);
             });
 
+            final Tools tools = project.getExtensions().getByType(Subsystems.class).getTools();
             installerProfile.configure((Consumer<InstallerProfile>) profile -> {
                 profile.getProfile().convention(project.getName());
                 profile.getVersion().set(launcherProfile.getId());
@@ -396,54 +461,55 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 profile.data("MC_SRG", String.format("[net.minecraft:client:%s:srg]", neoFormVersion), String.format("[net.minecraft:server:%s:srg]", neoFormVersion));
                 profile.data("PATCHED", String.format("[%s:%s:%s:client]", "net.neoforged", "neoforge", project.getVersion()), String.format("[%s:%s:%s:server]", "net.neoforged", "neoforge", project.getVersion()));
                 profile.data("MCP_VERSION", String.format("'%s'", neoFormVersion), String.format("'%s'", neoFormVersion));
-                profile.processor(project, Constants.INSTALLERTOOLS, processor -> {
+                profile.processor(project, Tools::getInstallerTools, processor -> {
                     processor.server();
                     processor.getArguments().addAll("--task", "EXTRACT_FILES", "--archive", "{INSTALLER}",
-                            
+
                             "--from", "data/run.sh", "--to", "{ROOT}/run.sh", "--exec", "{ROOT}/run.sh",
-                            
+
                             "--from", "data/run.bat", "--to", "{ROOT}/run.bat",
-                            
+
                             "--from", "data/user_jvm_args.txt", "--to", "{ROOT}/user_jvm_args.txt", "--optional", "{ROOT}/user_jvm_args.txt",
-                            
+
                             "--from", "data/win_args.txt", "--to", String.format("{ROOT}/libraries/%s/%s/%s/win_args.txt", project.getGroup().toString().replaceAll("\\.", "/"), project.getName(), project.getVersion()),
-                            
+
                             "--from", "data/unix_args.txt", "--to", String.format("{ROOT}/libraries/%s/%s/%s/unix_args.txt", project.getGroup().toString().replaceAll("\\.", "/"), project.getName(), project.getVersion()));
                 });
-                profile.processor(project, Constants.INSTALLERTOOLS, processor -> {
+                profile.processor(project, Tools::getInstallerTools, processor -> {
                     processor.server();
                     processor.getArguments().addAll("--task", "BUNDLER_EXTRACT", "--input", "{MINECRAFT_JAR}", "--output", "{ROOT}/libraries/", "--libraries");
                 });
-                profile.processor(project, Constants.INSTALLERTOOLS, processor -> {
+                profile.processor(project, Tools::getInstallerTools, processor -> {
                     processor.server();
                     processor.getArguments().addAll("--task", "BUNDLER_EXTRACT", "--input", "{MINECRAFT_JAR}", "--output", "{MC_UNPACKED}", "--jar-only");
                 });
-                profile.processor(project, Constants.INSTALLERTOOLS, processor -> {
+                profile.processor(project, Tools::getInstallerTools, processor -> {
                     processor.getArguments().addAll("--task", "MCP_DATA", "--input", String.format("[%s]", neoformDependency), "--output", "{MAPPINGS}", "--key", "mappings");
                 });
-                profile.processor(project, Constants.INSTALLERTOOLS, processor -> {
+                profile.processor(project, Tools::getInstallerTools, processor -> {
                     processor.getArguments().addAll("--task", "DOWNLOAD_MOJMAPS", "--version", runtimeDefinition.getSpecification().getMinecraftVersion(), "--side", "{SIDE}", "--output", "{MOJMAPS}");
                 });
-                profile.processor(project, Constants.INSTALLERTOOLS, processor -> {
+                profile.processor(project, Tools::getInstallerTools, processor -> {
                     processor.getArguments().addAll("--task", "MERGE_MAPPING", "--left", "{MAPPINGS}", "--right", "{MOJMAPS}", "--output", "{MERGED_MAPPINGS}", "--classes", "--fields", "--methods", "--reverse-right");
                 });
-                profile.processor(project, Constants.JARSPLITTER, processor -> {
+                profile.processor(project, Tools::getJarSplitter, processor -> {
                     processor.client();
                     processor.getArguments().addAll("--input", "{MINECRAFT_JAR}", "--slim", "{MC_SLIM}", "--extra", "{MC_EXTRA}", "--srg", "{MERGED_MAPPINGS}");
                 });
-                profile.processor(project, Constants.JARSPLITTER, processor -> {
+                profile.processor(project, Tools::getJarSplitter, processor -> {
                     processor.server();
                     processor.getArguments().addAll("--input", "{MC_UNPACKED}", "--slim", "{MC_SLIM}", "--extra", "{MC_EXTRA}", "--srg", "{MERGED_MAPPINGS}");
                 });
-                profile.processor(project, Constants.FART, processor -> {
+                profile.processor(project, tools.getAutoRenamingTool(), processor -> {
                     processor.getArguments().addAll("--input", "{MC_SLIM}", "--output", "{MC_SRG}", "--names", "{MERGED_MAPPINGS}", "--ann-fix", "--ids-fix", "--src-fix", "--record-fix");
                 });
-                profile.processor(project, Constants.BINARYPATCHER, processor -> {
+                profile.processor(project, tools.getBinaryPatcher(), processor -> {
                     processor.getArguments().addAll("--clean", "{MC_SRG}", "--output", "{PATCHED}", "--apply", "{BINPATCH}");
                 });
-                
+
                 profile.getLibraries().add(Library.fromOutput(signUniversalJar, project, "net.neoforged", "neoforge", project.getVersion().toString(), "universal"));
-                
+
+                //TODO: Abstract this away to some kind of DSL property
                 profile.getIcon().set(project.provider(() -> {
                     final File icon = new File(project.getRootProject().getProjectDir(), "docs/assets/neoforged.ico");
                     if (!icon.exists()) {
@@ -463,16 +529,16 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                     project.getConfigurations(),
                     "InstallerJsonInstallerLibraries"
             );
-            installerJsonInstallerLibrariesConfiguration.extendsFrom(installerLibrariesConfiguration);
+            ConfigurationUtils.extendsFrom(project, installerJsonInstallerLibrariesConfiguration, installerLibrariesConfiguration);
             installerJsonInstallerLibrariesConfiguration.shouldResolveConsistentlyWith(runtimeClasspath);
 
             final TaskProvider<CreateLegacyInstallerJson> createLegacyInstallerJson = project.getTasks().register("createLegacyInstallerJson", CreateLegacyInstallerJson.class, task -> {
                 task.getProfile().set(installerProfile);
                 task.getLibraries().from(installerJsonInstallerLibrariesConfiguration);
                 task.getRepositoryURLs().set(repoCollection);
-                
+
                 task.dependsOn(signUniversalJar);
-                
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
 
@@ -484,35 +550,36 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 task.getInput().from(installerToolConfiguration);
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
+
             final TaskProvider<CreateClasspathFiles> createWindowsServerArgsFile = project.getTasks().register("createWindowsServerArgsFile", CreateClasspathFiles.class, task -> {
                 task.getModulePath().from(moduleOnlyConfiguration);
-                task.getClasspath().from(installerConfiguration);
+                task.getClasspath().from(installerRuntimeLibrariesConfiguration);
                 task.getClasspath().from(gameLayerLibraryConfiguration);
                 task.getClasspath().from(pluginLayerLibraryConfiguration);
                 task.getPathSeparator().set(";");
                 task.getServer().set(runtimeDefinition.getGameArtifactProvidingTasks().get(GameArtifact.SERVER_JAR).flatMap(WithOutput::getOutput));
                 task.getNeoFormVersion().set(neoFormVersion);
-                
+
                 configureInstallerTokens(task, runtimeDefinition, Lists.newArrayList(moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration), pluginLayerLibraryConfiguration, gameLayerLibraryConfiguration);
-                
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
+
             final TaskProvider<CreateClasspathFiles> createUnixServerArgsFile = project.getTasks().register("createUnixServerArgsFile", CreateClasspathFiles.class, task -> {
                 task.getModulePath().from(moduleOnlyConfiguration);
-                task.getClasspath().from(installerConfiguration);
+                task.getClasspath().from(installerRuntimeLibrariesConfiguration);
                 task.getClasspath().from(gameLayerLibraryConfiguration);
                 task.getClasspath().from(pluginLayerLibraryConfiguration);
                 task.getPathSeparator().set(":");
                 task.getServer().set(runtimeDefinition.getGameArtifactProvidingTasks().get(GameArtifact.SERVER_JAR).flatMap(WithOutput::getOutput));
                 task.getNeoFormVersion().set(neoFormVersion);
-                
+
                 configureInstallerTokens(task, runtimeDefinition, Lists.newArrayList(moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration), pluginLayerLibraryConfiguration, gameLayerLibraryConfiguration);
-                
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
+
+            var projectVersion = project.getVersion().toString();
             final TaskProvider<CreateLegacyInstaller> installerJar = project.getTasks().register("legacyInstallerJar", CreateLegacyInstaller.class, task -> {
                 task.getInstallerCore().set(downloadInstaller.flatMap(WithOutput::getOutput));
                 task.getInstallerJson().set(createLegacyInstallerJson.flatMap(WithOutput::getOutput));
@@ -522,24 +589,24 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 task.getWindowsServerArgs().set(createWindowsServerArgsFile.flatMap(WithOutput::getOutput));
                 task.getUnixServerArgs().set(createUnixServerArgsFile.flatMap(WithOutput::getOutput));
                 task.getData().from(project.getRootProject().fileTree("server_files/").exclude("args.txt"));
-                
+
                 configureInstallerTokens(task, runtimeDefinition, Lists.newArrayList(moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration), pluginLayerLibraryConfiguration, gameLayerLibraryConfiguration);
-                
+
                 if (project.getProperties().containsKey("neogradle.runtime.platform.installer.debug") && Boolean.parseBoolean(project.getProperties().get("neogradle.runtime.platform.installer.debug").toString())) {
                     task.from(signUniversalJar.flatMap(WithOutput::getOutput), spec -> {
-                        spec.into(String.format("/maven/net/neoforged/neoforge/%s/", project.getVersion()));
-                        spec.rename(name -> String.format("neoforge-%s-universal.jar", project.getVersion()));
+                        spec.into(String.format("/maven/net/neoforged/neoforge/%s/", projectVersion));
+                        spec.rename(name -> String.format("neoforge-%s-universal.jar", projectVersion));
                     });
                 }
             });
-            
+
             TaskProvider<PotentiallySignJar> signInstallerJar = project.getTasks().register("signInstallerJar", PotentiallySignJar.class, task -> {
                 task.getInput().set(installerJar.flatMap(Zip::getArchiveFile));
                 task.getOutputFileName().set(project.provider(() -> String.format("%s-%s-installer.jar", project.getName(), project.getVersion())));
-                
+
                 task.dependsOn(installerJar);
             });
-            
+
             //Note the following runtypes are for now hardcoded, in the future they should be pulled from the runtime definition
             //Note: We can not use a 'configureEach' here, because this causes issues with the config cache.
             userdevProfile.runType("client", type -> {
@@ -548,7 +615,7 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 type.getIsClient().set(true);
                 type.getIsGameTest().set(true);
                 type.getSystemProperties().put("neoforge.enableGameTest", "true");
-                
+
                 type.getArguments().add("--launchTarget");
                 type.getArguments().add("forgeclientuserdev");
                 type.getArguments().add("--version");
@@ -557,7 +624,7 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 type.getArguments().add("{asset_index}");
                 type.getArguments().add("--assetsDir");
                 type.getArguments().add("{assets_root}");
-                
+
                 configureUserdevRunType(type, moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration, userdevCompileOnlyConfiguration, project);
             });
             userdevProfile.runType("server", type -> {
@@ -567,7 +634,7 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
 
                 type.getArguments().add("--launchTarget");
                 type.getArguments().add("forgeserveruserdev");
-                
+
                 configureUserdevRunType(type, moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration, userdevCompileOnlyConfiguration, project);
             });
             userdevProfile.runType("gameTestServer", type -> {
@@ -577,11 +644,11 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 type.getIsGameTest().set(true);
                 type.getSystemProperties().put("neoforge.enableGameTest", "true");
                 type.getSystemProperties().put("neoforge.gameTestServer", "true");
-                
-                
+
+
                 type.getArguments().add("--launchTarget");
                 type.getArguments().add("forgeserveruserdev");
-                
+
                 configureUserdevRunType(type, moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration, userdevCompileOnlyConfiguration, project);
             });
             userdevProfile.runType("data", type -> {
@@ -595,7 +662,7 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 type.getArguments().add("{asset_index}");
                 type.getArguments().add("--assetsDir");
                 type.getArguments().add("{assets_root}");
-                
+
                 configureUserdevRunType(type, moduleOnlyConfiguration, gameLayerLibraryConfiguration, pluginLayerLibraryConfiguration, userdevCompileOnlyConfiguration, project);
             });
 
@@ -623,7 +690,7 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
             userdevProfile.getAccessTransformerDirectory().set("ats/");
             userdevProfile.getBinaryPatchFile().set("joined.lzma");
             userdevProfile.getBinaryPatcher().set(project.getObjects().newInstance(UserdevProfile.ToolExecution.class).configure((Action<UserdevProfile.ToolExecution>) tool -> {
-                tool.getTool().set(Constants.BINPATCHER);
+                tool.getTool().set(project.getExtensions().getByType(Subsystems.class).getTools().getBinaryPatcher());
                 tool.getArguments().addAll("--clean", "{clean}", "--output", "{output}", "--apply", "{patch}");
             }));
             userdevProfile.getSourcesJarArtifactCoordinate().set(createCoordinate(project, "sources"));
@@ -633,27 +700,27 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                     project.getConfigurations(),
                     "userdevLibraries"
             );
-            userdevJsonLibrariesConfiguration.extendsFrom(
+            ConfigurationUtils.extendsFrom(project,
+                    userdevJsonLibrariesConfiguration,
                     userdevCompileOnlyConfiguration,
                     installerLibrariesConfiguration,
                     gameLayerLibraryConfiguration,
                     pluginLayerLibraryConfiguration,
-                    moduleOnlyConfiguration
-            );
+                    moduleOnlyConfiguration);
             userdevJsonLibrariesConfiguration.shouldResolveConsistentlyWith(runtimeClasspath);
 
             final Configuration userdevJsonModuleOnlyConfiguration = ConfigurationUtils.temporaryUnhandledConfiguration(
                     project.getConfigurations(),
                     "userdevModuleOnly"
             );
-            userdevJsonModuleOnlyConfiguration.extendsFrom(moduleOnlyConfiguration);
+            ConfigurationUtils.extendsFrom(project, userdevJsonModuleOnlyConfiguration, moduleOnlyConfiguration);
             userdevJsonLibrariesConfiguration.shouldResolveConsistentlyWith(runtimeClasspath);
 
             final Configuration userdevJsonUserdevTestImplementationConfiguration = ConfigurationUtils.temporaryUnhandledConfiguration(
                     project.getConfigurations(),
                     "userdevJsonUserdevTestImplementation"
             );
-            userdevJsonUserdevTestImplementationConfiguration.extendsFrom(userdevTestImplementationConfiguration);
+            ConfigurationUtils.extendsFrom(project, userdevJsonUserdevTestImplementationConfiguration, userdevTestImplementationConfiguration);
             userdevJsonUserdevTestImplementationConfiguration.shouldResolveConsistentlyWith(runtimeClasspath);
 
             final TaskProvider<CreateUserdevJson> createUserdevJson = project.getTasks().register("createUserdevJson", CreateUserdevJson.class, task -> {
@@ -665,27 +732,47 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
 
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
-            final TaskProvider<AccessTransformerFileGenerator> generateAts = project.getTasks().register("generateAccessTransformers", AccessTransformerFileGenerator.class, task -> {
-                CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
-            });
-            
+
             final TaskProvider<PackJar> packPatches = project.getTasks().register("packPatches", PackJar.class, task -> {
                 task.getInputFiles().from(project.fileTree(patches).matching(filterable -> {
                     filterable.include("**/*.patch");
                 }));
-                
+
                 CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
             });
-            
-            final TaskProvider<BakePatches> bakePatches = project.getTasks().register("bakePatches", BakePatches.class, task -> {
-                task.getInput().set(packPatches.flatMap(WithOutput::getOutput));
-                
-                CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
-            });
-            
+
+            final TaskProvider<? extends WithOutput> bakePatches;
+            if (!parchmentArtifact.isPresent()) {
+                bakePatches = project.getTasks().register("bakePatches", BakePatches.class, task -> {
+                    task.getInput().set(packPatches.flatMap(WithOutput::getOutput));
+
+                    CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
+                });
+            } else {
+                final var sourceSetDir = SetupUtils.getSetupSourceTarget(project);
+                final var sourcesWithoutParchment = RuntimeDevRuntimeExtension.applyParchment(
+                        project,
+                        "reverseParchment",
+                        mergeMappings.flatMap(WithOutput::getOutput).map(RegularFile::getAsFile),
+                        project.provider(() -> ""),
+                        project.provider(() -> sourceSetDir),
+                        false,
+                        runtimeDefinition.getSpecification(),
+                        workingDirectory,
+                        strippedJar
+                );
+                sourcesWithoutParchment.configure(withOutput -> withOutput.getProgramArguments().add("--ignore-prefix=mcp/"));
+                bakePatches = project.getTasks().register("createRenamedSourcePatches", GenerateSourcePatches.class, task -> {
+                    task.getBase().set(neoFormSources.flatMap(WithOutput::getOutput));
+                    task.getModified().set(sourcesWithoutParchment.flatMap(WithOutput::getOutput));
+                    task.getShouldCreateAutomaticHeader().set(false);
+
+                    CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
+                });
+            }
+
             final AccessTransformers accessTransformers = project.getExtensions().getByType(AccessTransformers.class);
-            
+
             final TaskProvider<Jar> userdevJar = project.getTasks().register("userdevJar", Jar.class, task -> {
                 task.getArchiveClassifier().set("userdev");
                 task.getArchiveAppendix().set("userdev");
@@ -693,16 +780,13 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                 task.getArchiveBaseName().set(project.getName());
                 task.getDestinationDirectory().set(project.getLayout().getBuildDirectory().dir("libs"));
                 task.getArchiveFileName().set(project.provider(() -> String.format("%s-%s-userdev.jar", project.getName(), project.getVersion())));
-                
+
                 task.dependsOn(bakePatches);
-                
+
                 //We need to get a raw file tree here, because else we capture the task reference in copy spec.
                 final FileTree bakedPatches = project.zipTree(bakePatches.get().getOutput().get().getAsFile());
                 task.from(createUserdevJson.flatMap(WithOutput::getOutput), spec -> {
                     spec.rename(name -> "config.json");
-                });
-                task.from(generateAts.flatMap(WithOutput::getOutput), spec -> {
-                    spec.into("ats/");
                 });
                 task.from(accessTransformers.getFiles(), spec -> {
                     spec.into("ats/");
@@ -714,7 +798,7 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
                     spec.into("patches/");
                 });
             });
-            
+
             final TaskProvider<?> assembleTask = project.getTasks().named("assemble");
             assembleTask.configure(task -> {
                 task.dependsOn(signInstallerJar);
@@ -724,27 +808,27 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
             });
         });
     }
-    
+
     private TaskProvider<SetupProjectFromRuntime> configureSetupTasks(Provider<RegularFile> rawJarProvider, SourceSet mainSource, Configuration minecraftDependencies) {
         final IdeManagementExtension ideManagementExtension = project.getExtensions().getByType(IdeManagementExtension.class);
-        
+
         final TaskProvider<? extends Task> ideImportTask = ideManagementExtension.getOrCreateIdeImportTask();
-        
+
         final TaskProvider<SetupProjectFromRuntime> projectSetup = project.getTasks().register("setup", SetupProjectFromRuntime.class, task -> {
             task.getSourcesFile().set(rawJarProvider);
             task.dependsOn(ideImportTask);
         });
-        
+
         final Configuration apiConfiguration = project.getConfigurations().getByName(mainSource.getApiConfigurationName());
         minecraftDependencies.getAllDependencies().forEach(dep -> apiConfiguration.getDependencies().add(dep));
-        
+
         final Project rootProject = project.getRootProject();
         if (!rootProject.getTasks().getNames().contains("setup")) {
             rootProject.getTasks().create("setup");
         }
-        
+
         rootProject.getTasks().named("setup").configure(task -> task.dependsOn(projectSetup));
-        
+
         return projectSetup;
     }
 
@@ -774,54 +858,66 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
 
         runType.getClasspath().from(runtimeClasspath);
 
-        Provider<String> assetsDir = DownloadAssets.getAssetsDirectory(project, project.provider(runtimeDefinition::getVersionJson)).map(Directory::getAsFile).map(File::getAbsolutePath);
+        runType.getRunTemplate().getArguments().addAll(
+                TransformerUtils.ifTrue(runType.getRunTemplate().getIsClient(),
+                        "--username", "Dev",
+                        "--version", project.getName(),
+                        "--accessToken", "0",
+                        "--launchTarget", "forgeclientdev")
+
+        );
+
+        runType.getRunTemplate().getArguments().addAll(
+                TransformerUtils.ifTrue(runType.getRunTemplate().getIsServer(),
+                        "--launchTarget", "forgeserverdev")
+        );
+
+        runType.getRunTemplate().getSystemProperties().putAll(
+                TransformerUtils.ifTrueMap(runType.getRunTemplate().getIsGameTest(),
+                        "neoforge.enableGameTest", "true")
+        );
+
+        runType.getRunTemplate().getSystemProperties().putAll(
+                TransformerUtils.ifTrueMap(
+                        runType.getRunTemplate().getIsGameTest().flatMap(TransformerUtils.and(runType.getRunTemplate().getIsServer())),
+                        "neoforge.gameTestServer", "true")
+        );
+
+        runType.getRunTemplate().getArguments().addAll(
+                TransformerUtils.ifTrue(runType.getRunTemplate().getIsDataGenerator(),
+                        "--launchTarget", "forgedatadev",
+                        "--flat", "--all", "--validate",
+                        "--output", project.getRootProject().file("src/generated/resources/").getAbsolutePath())
+        );
+
+        mainSourceSet.getResources().getSrcDirs().forEach(file -> {
+            runType.getRunTemplate().getArguments().addAll(
+                    TransformerUtils.ifTrue(runType.getRunTemplate().getIsDataGenerator(),
+                            "--existing", file.getAbsolutePath())
+            );
+        });
+
+        Provider<String> assetsDir = DownloadAssets.getAssetsDirectory(project).map(Directory::getAsFile).map(File::getAbsolutePath);
         Provider<String> assetIndex = runtimeDefinition.getAssets().flatMap(DownloadAssets::getAssetIndex);
 
-        runType.getRunAdapter().set(run -> {
-            if (run.getIsClient().get()) {
-                run.getProgramArguments().addAll("--username", "Dev");
-                run.getProgramArguments().addAll("--version", project.getName());
-                run.getProgramArguments().addAll("--accessToken", "0");
-                run.getProgramArguments().addAll("--launchTarget", "forgeclientdev");
-            }
+        runType.getRunTemplate().getArguments().addAll(
+                TransformerUtils.ifTrue(
+                        runType.getRunTemplate().getIsDataGenerator().flatMap(TransformerUtils.or(runType.getRunTemplate().getIsClient(), runType.getRunTemplate().getIsJUnit())),
+                        project.provider(() -> "--assetsDir"),
+                        assetsDir,
+                        project.provider(() -> "--assetIndex"),
+                        assetIndex)
+        );
 
-            if (run.getIsServer().get()) {
-                run.getProgramArguments().addAll("--launchTarget", "forgeserverdev");
-            }
-
-            if (run.getIsGameTest().get()) {
-                run.getSystemProperties().put("neoforge.enableGameTest", "true");
-
-                if (run.getIsServer().get()) {
-                    run.getSystemProperties().put("neoforge.gameTestServer", "true");
-                }
-            }
-
-            if (run.getIsDataGenerator().get()) {
-                run.getProgramArguments().addAll("--launchTarget", "forgedatadev");
-
-                run.getProgramArguments().addAll("--flat", "--all", "--validate");
-                run.getProgramArguments().add("--output");
-                run.getProgramArguments().add(project.getRootProject().file("src/generated/resources/").getAbsolutePath());
-                mainSourceSet.getResources().getSrcDirs().forEach(file -> {
-                    run.getProgramArguments().addAll("--existing", file.getAbsolutePath());
-                });
-            }
-
-            if (run.getIsDataGenerator().get() || run.getIsClient().get() || runType.getIsJUnit().get()) {
-                run.getProgramArguments().add("--assetsDir");
-                run.getProgramArguments().add(assetsDir);
-                run.getProgramArguments().add("--assetIndex");
-                run.getProgramArguments().add(assetIndex);
-            }
-
-            if (run.getIsJUnit().get()) {
-                run.getProgramArguments().addAll("--launchTarget", "forgejunitdev");
-            }
-        });
+        runType.getRunTemplate().getArguments().addAll(
+                TransformerUtils.ifTrue(runType.getRunTemplate().getIsJUnit(),
+                        "--launchTarget", "forgejunitdev")
+        );
     }
 
     private static void configureInstallerTokens(final TokenizedTask tokenizedTask, final RuntimeDevRuntimeDefinition runtimeDefinition, final Collection<Configuration> ignoreConfigurations, final Configuration pluginLayerLibraries, final Configuration gameLayerLibraries) {
+        //TODO: This should be moved to a DSL configurable model.
+
         tokenizedTask.token("TASK", "forgeserver");
         tokenizedTask.token("MAVEN_PATH", String.format("%s/%s/%s", tokenizedTask.getProject().getGroup().toString().replace('.', '/'), tokenizedTask.getProject().getName(), tokenizedTask.getProject().getVersion()));
         tokenizedTask.token("FORGE_VERSION", tokenizedTask.getProject().getVersion());
@@ -867,12 +963,15 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
     }
 
     private void configureRun(final Run run, final RuntimeDevRuntimeDefinition runtimeDefinition) {
+        final JavaPluginExtension javaPluginExtension = project.getExtensions().getByType(JavaPluginExtension.class);
+        final SourceSet mainSourceSet = javaPluginExtension.getSourceSets().getByName("main");
+
         run.getConfigureAutomatically().set(true);
         run.getConfigureFromDependencies().set(false);
 
-        if (run.getIsClient().get()) {
-            run.dependsOn(runtimeDefinition.getAssets(), runtimeDefinition.getNatives());
-        }
+        run.getDependsOn().addAll(
+                TransformerUtils.ifTrue(run.getIsClient(), runtimeDefinition.getAssets(), runtimeDefinition.getNatives())
+        );
     }
 
     private TaskProvider<? extends WithOutput> createCleanProvider(final TaskProvider<? extends WithOutput> jarProvider, final RuntimeDevRuntimeDefinition runtimeDefinition, File workingDirectory) {
@@ -911,6 +1010,31 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
         });
     }
 
+    private Provider<RegularFile> renameCompiledJar(TaskProvider<? extends WithOutput> mappingsFile,
+                                                    TaskProvider<? extends Jar> input,
+                                                    final RuntimeDevRuntimeDefinition runtimeDefinition,
+                                                    final File workingDirectory) {
+        var inputFile = input.flatMap(Jar::getArchiveFile);
+        return project.getTasks().register(CommonRuntimeUtils.buildTaskName(runtimeDefinition, "renameCompiledJar"), DefaultExecute.class, task -> {
+            task.getArguments().putRegularFile("mappings", mappingsFile.flatMap(WithOutput::getOutput));
+            task.getArguments().putRegularFile("input", inputFile);
+
+            task.getExecutingJar().fileProvider(ToolUtilities.resolveTool(project, Tools::getAutoRenamingTool));
+            task.getProgramArguments().addAll("--names", "{mappings}");
+            task.getProgramArguments().addAll("--input", "{input}");
+            task.getProgramArguments().addAll("--output", "{output}");
+            task.getProgramArguments().add("--disable-abstract-param");
+
+            project.getExtensions().getByType(SourceSetContainer.class).getByName("main").getCompileClasspath()
+                    .forEach(f -> task.getProgramArguments().addAll("--lib", f.getAbsolutePath()));
+
+            task.dependsOn(input);
+            task.dependsOn(mappingsFile);
+
+            CommonRuntimeExtension.configureCommonRuntimeTaskParameters(task, runtimeDefinition, workingDirectory);
+        }).flatMap(WithOutput::getOutput);
+    }
+
     private void configureUserdevRunType(final RunType runType, Configuration moduleOnlyConfiguration, Configuration gameLayerLibraryConfiguration, Configuration pluginLayerLibraryConfiguration, Configuration userdevCompileOnlyConfiguration, Project project) {
         runType.getMainClass().set("cpw.mods.bootstraplauncher.BootstrapLauncher");
 
@@ -932,7 +1056,7 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
     }
 
     private static String createCoordinate(final Project project, final String classifier) {
-        return Artifact.from(project, classifier, "jar").toString();
+        return Objects.toString(Artifact.from(project, classifier, "jar"));
     }
 
     @NotNull
@@ -947,4 +1071,6 @@ public abstract class DynamicProjectExtension implements BaseDSLElement<DynamicP
     @Inject
     public abstract ProviderFactory getProviderFactory();
 
+    @DSLProperty
+    public abstract Property<String> getParchment();
 }

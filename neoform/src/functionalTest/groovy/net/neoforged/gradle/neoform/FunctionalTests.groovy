@@ -1,8 +1,7 @@
 package net.neoforged.gradle.neoform
 
-import net.neoforged.gradle.common.caching.CentralCacheService
+
 import net.neoforged.trainingwheels.gradle.functional.BuilderBasedTestSpecification
-import net.neoforged.trainingwheels.gradle.functional.builder.Runtime
 import org.gradle.testkit.runner.TaskOutcome
 
 class FunctionalTests extends BuilderBasedTestSpecification {
@@ -80,16 +79,13 @@ class FunctionalTests extends BuilderBasedTestSpecification {
                 }
             }
             
-            minecraft {
-                accessTransformers {
-                    entry "public net.minecraft.client.Minecraft LOGGER # searchRegistry"
-                }
-            }
+            minecraft.accessTransformers.file rootProject.file('src/main/resources/META-INF/accesstransformer.cfg')
             
             dependencies {
                 implementation 'net.minecraft:neoform_client:${NEOFORM_VERSION}'
             }
             """)
+            it.file("src/main/resources/META-INF/accesstransformer.cfg", """public-f net.minecraft.client.Minecraft LOGGER""")
             it.file("src/main/java/net/neoforged/gradle/neoform/FunctionalTests.java", """
             package net.neoforged.gradle.neoform;
             

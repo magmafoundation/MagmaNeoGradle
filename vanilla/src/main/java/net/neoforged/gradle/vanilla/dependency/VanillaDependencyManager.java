@@ -50,6 +50,7 @@ public final class VanillaDependencyManager {
                                     project,
                                     runtimeDefinition.getSourceJarTask(),
                                     runtimeDefinition.getRawJarTask(),
+                                    project.getConfigurations().detachedConfiguration(),
                                     runtimeDefinition.getMinecraftDependenciesConfiguration(),
                                     Collections.emptySet()
                             ));
@@ -99,9 +100,6 @@ public final class VanillaDependencyManager {
             builder.withMinecraftArtifact(StringCapitalizationUtils.deCapitalize(dependency.getName()));
             builder.withDistributionType(DistributionType.valueOf(dependency.getName().toUpperCase(Locale.ROOT)));
             builder.withMinecraftVersion(version);
-            builder.withFartVersion(runtimeExtension.getFartVersion());
-            builder.withForgeFlowerVersion(runtimeExtension.getVineFlowerVersion());
-            builder.withAccessTransformerApplierVersion(runtimeExtension.getAccessTransformerApplierVersion());
         });
     }
 

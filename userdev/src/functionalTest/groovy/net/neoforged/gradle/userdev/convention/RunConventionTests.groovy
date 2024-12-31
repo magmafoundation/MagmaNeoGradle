@@ -1,6 +1,6 @@
 package net.neoforged.gradle.userdev.convention
 
-import net.neoforged.gradle.common.caching.CentralCacheService
+
 import net.neoforged.trainingwheels.gradle.functional.BuilderBasedTestSpecification
 import org.gradle.testkit.runner.TaskOutcome
 
@@ -50,8 +50,6 @@ class RunConventionTests extends BuilderBasedTestSpecification {
 
         then:
         run.output.contains("Run count: 0")
-        run.output.contains("Runtype count:")
-        !run.output.contains("Runtype count: 0")
     }
 
     def "disabling run conventions does not register runs"() {
@@ -89,8 +87,8 @@ class RunConventionTests extends BuilderBasedTestSpecification {
 
         then:
         run.output.contains("Run count: 0")
-        run.output.contains("Runtype count:")
         !run.output.contains("Runtype count: 0")
+        run.output.contains("Runtype count: ")
     }
 
     def "disabling automatic registration does not register runs"() {
@@ -128,13 +126,13 @@ class RunConventionTests extends BuilderBasedTestSpecification {
 
         then:
         run.output.contains("Run count: 0")
-        run.output.contains("Runtype count:")
         !run.output.contains("Runtype count: 0")
+        run.output.contains("Runtype count: ")
     }
 
     def "enabling automatic registration does not register runs"() {
         given:
-        def project = create("disable_automatic_registration_disables_registration", {
+        def project = create("enabling_automatic_run_registration_does_not_register_types", {
             it.build("""
             java {
                 toolchain {
@@ -169,8 +167,8 @@ class RunConventionTests extends BuilderBasedTestSpecification {
         then:
         run.output.contains("Run count: ")
         !run.output.contains("Run count: 0")
-        run.output.contains("Runtype count:")
         !run.output.contains("Runtype count: 0")
+        run.output.contains("Runtype count: ")
         run.output.contains("Equal: true")
     }
 
@@ -261,7 +259,7 @@ class RunConventionTests extends BuilderBasedTestSpecification {
             }
             
             afterEvaluate {
-                logger.lifecycle("Run contains cp entry: \${project.runs.client.dependencies.get().runtimeConfiguration.files.any { it.name.contains 'jgrapht' }}")
+                logger.lifecycle("Run contains cp entry: \${project.runs.client.dependencies.runtimeConfiguration.files.any { it.name.contains 'jgrapht' }}")
             }
             """)
             it.withToolchains()
@@ -271,6 +269,7 @@ class RunConventionTests extends BuilderBasedTestSpecification {
         when:
         def run = project.run {
             it.tasks(':dependencies')
+            it.stacktrace()
         }
 
         then:
@@ -297,8 +296,12 @@ class RunConventionTests extends BuilderBasedTestSpecification {
                 runs 'org.jgrapht:jgrapht-core:+'
             }
             
+            runs {
+                client { }
+            }
+            
             afterEvaluate {
-                logger.lifecycle("Run contains cp entry: \${project.runs.client.dependencies.get().runtimeConfiguration.files.any { it.name.contains 'jgrapht' }}")
+                logger.lifecycle("Run contains cp entry: \${project.runs.client.dependencies.runtimeConfiguration.files.any { it.name.contains 'jgrapht' }}")
             }
             """)
             it.withToolchains()

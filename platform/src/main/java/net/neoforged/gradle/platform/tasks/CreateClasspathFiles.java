@@ -6,12 +6,9 @@ import net.neoforged.gradle.platform.util.ArtifactPathsCollector;
 import net.neoforged.gradle.platform.util.StringUtils;
 import org.apache.tools.ant.filters.ReplaceTokens;
 import org.gradle.api.file.ConfigurableFileCollection;
-import org.gradle.api.file.CopySpec;
 import org.gradle.api.file.FileTree;
 import org.gradle.api.file.RegularFileProperty;
-import org.gradle.api.provider.MapProperty;
 import org.gradle.api.provider.Property;
-import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.*;
 
 import java.io.File;
@@ -22,10 +19,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+//TODO: This task crashes a run when the input template file is not present.
 @CacheableTask
 public abstract class CreateClasspathFiles extends DefaultRuntime implements TokenizedTask {
-    
-    
+
     public CreateClasspathFiles() {
         getTemplate().set(getProject().getRootProject().file("server_files/args.txt"));
         getOutputFileName().convention("args.txt");
@@ -71,7 +68,7 @@ public abstract class CreateClasspathFiles extends DefaultRuntime implements Tok
             copySpec.into(getOutputDirectory().get().getAsFile());
         });
     }
-    
+
     @InputFile
     @PathSensitive(PathSensitivity.NONE)
     public abstract RegularFileProperty getTemplate();

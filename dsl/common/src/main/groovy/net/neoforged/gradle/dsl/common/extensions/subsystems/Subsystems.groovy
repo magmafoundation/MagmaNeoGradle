@@ -3,6 +3,7 @@ package net.neoforged.gradle.dsl.common.extensions.subsystems
 import groovy.transform.CompileStatic
 import net.minecraftforge.gdi.BaseDSLElement
 import net.minecraftforge.gdi.annotations.DSLProperty
+import net.neoforged.gradle.dsl.common.extensions.subsystems.tools.RenderDocTools
 import org.gradle.api.tasks.Nested
 
 /**
@@ -10,6 +11,11 @@ import org.gradle.api.tasks.Nested
  */
 @CompileStatic
 interface Subsystems extends BaseDSLElement<Subsystems> {
+
+    /**
+     * @return settings for the integration subsystem
+     */
+    Integration getIntegration();
 
     /**
      * @return settings for the decompiler subsystem
@@ -52,4 +58,11 @@ interface Subsystems extends BaseDSLElement<Subsystems> {
     @Nested
     @DSLProperty
     DevLogin getDevLogin();
+
+    /**
+     * @return settings for the render doc subsystem
+     */
+    @Nested
+    @DSLProperty
+    RenderDoc getRenderDoc();
 }

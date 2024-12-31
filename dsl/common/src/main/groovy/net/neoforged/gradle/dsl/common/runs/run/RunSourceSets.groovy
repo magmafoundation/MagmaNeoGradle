@@ -4,6 +4,7 @@ import com.google.common.collect.Multimap
 import groovy.transform.CompileStatic
 import net.minecraftforge.gdi.ConfigurableDSLElement
 import net.minecraftforge.gdi.annotations.DSLProperty
+import org.gradle.api.Action
 import org.gradle.api.provider.MapProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.Provider
@@ -91,6 +92,13 @@ interface RunSourceSets extends ConfigurableDSLElement<RunSourceSets> {
     void add(String groupId, SourceSet... sourceSets);
 
     /**
+     * Adds all lazy source sets to this run
+     *
+     * @param sourceSets The source sets to add
+     */
+    void addAllLater(Provider<Multimap<String, SourceSet>> sourceSets);
+
+    /**
      * Defines the primary sourceset of the run,
      * If defined as to be part of the run, it will be used as the primary source set, who's minecraft dependency will be used
      * instead of the default combined runtime classpath of the mod sources.
@@ -109,4 +117,11 @@ interface RunSourceSets extends ConfigurableDSLElement<RunSourceSets> {
      */
     @Internal
     Provider<Multimap<String, SourceSet>> all();
+
+    /**
+     * Registers a callback that get called when a source set is added to this run
+     *
+     * @param action The action to call
+     */
+    void whenSourceSetAdded(Action<SourceSet> action)
 }

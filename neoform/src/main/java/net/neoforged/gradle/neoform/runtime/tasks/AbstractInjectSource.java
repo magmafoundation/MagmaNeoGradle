@@ -1,6 +1,5 @@
 package net.neoforged.gradle.neoform.runtime.tasks;
 
-import org.gradle.api.Project;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.tasks.Input;
@@ -49,9 +48,6 @@ public abstract class AbstractInjectSource {
      * should simply be ignored.
      */
     public abstract void copyTo(ZipOutputStream out) throws IOException;
-
-    @Inject
-    protected abstract Logger getLogger();
 
     protected final PatternSet createFilter() {
         PatternSet filter = new PatternSet();

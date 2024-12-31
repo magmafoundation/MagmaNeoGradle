@@ -3,31 +3,27 @@ package net.neoforged.gradle.userdev.runtime.extension;
 import net.neoforged.gradle.common.runtime.extensions.CommonRuntimeExtension;
 import net.neoforged.gradle.common.runtime.tasks.SourceAccessTransformer;
 import net.neoforged.gradle.common.util.CommonRuntimeTaskUtils;
-import net.neoforged.gradle.common.util.ProjectUtils;
-import net.neoforged.gradle.common.util.constants.RunsConstants;
+import net.neoforged.gradle.common.util.ConfigurationUtils;
 import net.neoforged.gradle.common.util.run.TypesUtil;
-import net.neoforged.gradle.dsl.common.extensions.Mappings;
-import net.neoforged.gradle.dsl.common.extensions.Minecraft;
+import net.neoforged.gradle.dsl.common.extensions.subsystems.Conventions;
+import net.neoforged.gradle.dsl.common.extensions.subsystems.Subsystems;
 import net.neoforged.gradle.dsl.common.runs.run.Run;
-import net.neoforged.gradle.dsl.common.runs.type.RunType;
+import net.neoforged.gradle.dsl.common.runs.run.RunManager;
+import net.neoforged.gradle.dsl.common.runs.type.RunTypeManager;
 import net.neoforged.gradle.dsl.common.runtime.tasks.tree.TaskTreeAdapter;
 import net.neoforged.gradle.dsl.common.tasks.WithOutput;
 import net.neoforged.gradle.dsl.common.util.CommonRuntimeUtils;
-import net.neoforged.gradle.dsl.common.util.ConfigurationUtils;
 import net.neoforged.gradle.dsl.common.util.DistributionType;
 import net.neoforged.gradle.dsl.userdev.configurations.UserdevProfile;
 import net.neoforged.gradle.neoform.runtime.definition.NeoFormRuntimeDefinition;
 import net.neoforged.gradle.neoform.runtime.extensions.NeoFormRuntimeExtension;
 import net.neoforged.gradle.neoform.runtime.tasks.InjectZipContent;
 import net.neoforged.gradle.neoform.runtime.tasks.Patch;
-import net.neoforged.gradle.neoform.util.NeoFormAccessTransformerUtils;
+import net.neoforged.gradle.neoform.util.NeoFormAccessTaskAdapterUtils;
 import net.neoforged.gradle.userdev.runtime.definition.UserDevRuntimeDefinition;
 import net.neoforged.gradle.userdev.runtime.specification.UserDevRuntimeSpecification;
-import org.gradle.api.NamedDomainObjectContainer;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.artifacts.DependencySet;
-import org.gradle.api.artifacts.dsl.DependencyCollector;
 import org.gradle.api.file.FileTree;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskProvider;
@@ -35,7 +31,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
-import java.util.Collections;
 
 public abstract class UserDevRuntimeExtension extends CommonRuntimeExtension<UserDevRuntimeSpecification, UserDevRuntimeSpecification.Builder, UserDevRuntimeDefinition> {
     
@@ -44,6 +39,7 @@ public abstract class UserDevRuntimeExtension extends CommonRuntimeExtension<Use
         super(project);
     }
     
+    @SuppressWarnings("unchecked")
     @Override
     protected @NotNull UserDevRuntimeDefinition doCreate(UserDevRuntimeSpecification spec) {
         final NeoFormRuntimeExtension neoFormRuntimeExtension = getProject().getExtensions().getByType(NeoFormRuntimeExtension.class);
@@ -68,10 +64,12 @@ public abstract class UserDevRuntimeExtension extends CommonRuntimeExtension<Use
                     .withDistributionType(DistributionType.JOINED)
                     .withAdditionalDependencies(getProject().files(userDevAdditionalDependenciesConfiguration));
 
-            final TaskTreeAdapter atAdapter = createAccessTransformerAdapter(userDevProfile.getAccessTransformerDirectory().get(), userDevJar)
-                                                            .andThen(NeoFormAccessTransformerUtils.createAccessTransformerAdapter(getProject()));
+            final TaskTreeAdapter atAndIISAdapter = createAccessTransformerAdapter(userDevProfile.getAccessTransformerDirectory().get(), userDevJar)
+                                                            .andThen(NeoFormAccessTaskAdapterUtils.createAccessTransformerAdapter(getProject()));
             
-            builder.withPostTaskAdapter("decompile", atAdapter);
+            builder.withPostTaskAdapter("decompile", atAndIISAdapter);
+
+            builder.withPreTaskAdapter("recompile", NeoFormAccessTaskAdapterUtils.createInterfaceInjectionAdapter(getProject()));
 
             builder.withPostTaskAdapter("patch", createPatchAdapter(userDevJar, userDevProfile.getSourcePatchesDirectory().get()));
 
@@ -91,24 +89,35 @@ public abstract class UserDevRuntimeExtension extends CommonRuntimeExtension<Use
                 );
             });
         });
-        
-        spec.setMinecraftVersion(neoFormRuntimeDefinition.getSpecification().getMinecraftVersion());
 
-        final NamedDomainObjectContainer<Run> runs = (NamedDomainObjectContainer<Run>) getProject().getExtensions().getByName(RunsConstants.Extensions.RUNS);
-        ProjectUtils.afterEvaluate(spec.getProject(), () -> runs.stream()
-                .filter(run -> run.getIsJUnit().get())
-                .flatMap(run -> run.getUnitTestSources().all().get().values().stream())
-                .distinct()
-                .forEach(src -> {
-                    DependencyCollector coll = spec.getProject().getObjects().dependencyCollector();
-                    spec.getProfile().getAdditionalTestDependencyArtifactCoordinates().get().forEach(coll::add);
-                    spec.getProject().getConfigurations().getByName(src.getImplementationConfigurationName()).fromDependencyCollector(coll);
-                }));
-
-        final NamedDomainObjectContainer<RunType> runTypes = (NamedDomainObjectContainer<RunType>) getProject().getExtensions().getByName(RunsConstants.Extensions.RUN_TYPES);
+        final RunTypeManager runTypes = getProject().getExtensions().getByType(RunTypeManager.class);
         userDevProfile.getRunTypes().forEach((type) -> {
             TypesUtil.registerWithPotentialPrefix(runTypes, spec.getIdentifier(), type.getName(), type::copyTo);
         });
+
+        final Conventions conventions = getProject().getExtensions().getByType(Subsystems.class).getConventions();
+        if (conventions.getIsEnabled().get()
+                && conventions.getRuns().getIsEnabled().get()
+                && conventions.getRuns().getShouldDefaultRunsBeCreated().get()) {
+            final RunManager runs = getProject().getExtensions().getByType(RunManager.class);
+            userDevProfile.getRunTypes().forEach(runType -> {
+                if (runs.getNames().contains(runType.getName())) {
+                    return;
+                }
+
+                try {
+                    final Run run = runs.create(runType.getName());
+                    run.configure(runType);
+                    run.getConfigureFromTypeWithName().set(false);
+                    run.getConfigureFromDependencies().set(false);
+                } catch (IllegalStateException ignored) {
+                    //thrown when the dependency is added lazily. This is fine.
+                }
+
+            });
+        }
+        
+        spec.setMinecraftVersion(neoFormRuntimeDefinition.getSpecification().getMinecraftVersion());
 
         return new UserDevRuntimeDefinition(
                 spec,
@@ -129,7 +138,12 @@ public abstract class UserDevRuntimeExtension extends CommonRuntimeExtension<Use
                 userDev.matching(filter -> filter.include(accessTransformerDirectory + "/**"));
 
         return (definition, previousTasksOutput, runtimeWorkspace, gameArtifacts, mappingVersionData, dependentTaskConfigurationHandler) -> {
-            final TaskProvider<? extends SourceAccessTransformer> accessTransformerTask = CommonRuntimeTaskUtils.createSourceAccessTransformer(definition, "Forges", runtimeWorkspace, dependentTaskConfigurationHandler, accessTransformerFiles, Collections.emptyList(), definition.getListLibrariesTaskProvider(), definition.getAllDependencies());
+            if (accessTransformerFiles.isEmpty()) {
+                // No access transformers found, so we don't need to do anything
+                return null;
+            }
+
+            final TaskProvider<? extends SourceAccessTransformer> accessTransformerTask = CommonRuntimeTaskUtils.createSourceAccessTransformer(definition, "Forges", accessTransformerFiles, definition.getListLibrariesTaskProvider(), definition.getAllDependencies());
             accessTransformerTask.configure(task -> task.getInputFile().set(previousTasksOutput.flatMap(WithOutput::getOutput)));
             accessTransformerTask.configure(task -> task.dependsOn(previousTasksOutput));
             return accessTransformerTask;

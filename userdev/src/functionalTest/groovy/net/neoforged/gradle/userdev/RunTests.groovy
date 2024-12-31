@@ -1,6 +1,6 @@
 package net.neoforged.gradle.userdev
 
-import net.neoforged.gradle.common.caching.CentralCacheService
+
 import net.neoforged.trainingwheels.gradle.functional.BuilderBasedTestSpecification
 import org.gradle.testkit.runner.TaskOutcome
 
@@ -10,6 +10,53 @@ class RunTests extends BuilderBasedTestSpecification {
     protected void configurePluginUnderTest() {
         pluginUnderTest = "net.neoforged.gradle.userdev";
         injectIntoAllProject = true;
+    }
+
+    def "a mod using a version library should be able to run the game"() {
+        given:
+        def project = create("version_libs_runnable", {
+            it.file("gradle/libs.versions.toml",
+                    """
+                    [versions]
+                    # Neoforge Settings
+                    neoforge = "+"
+                    
+                    [libraries]
+                    neoforge = { group = "net.neoforged", name = "neoforge", version.ref = "neoforge" }
+                    """.trim())
+
+            it.build("""
+            java {
+                toolchain {
+                    languageVersion = JavaLanguageVersion.of(21)
+                }
+            }
+            
+            repositories {
+                mavenCentral()
+            }
+                        
+            dependencies {
+                implementation(libs.neoforge)
+            }
+            """)
+            it.withToolchains()
+            it.withGlobalCacheDirectory(tempDir)
+        })
+
+        when:
+        def run = project.run {
+            it.tasks(':runData')
+            //We are expecting this test to fail, since there is a mod without any files included so it is fine.
+            it.shouldFail()
+            it.stacktrace()
+        }
+
+        then:
+        true
+        run.task(':writeMinecraftClasspathData').outcome == TaskOutcome.SUCCESS
+        run.output.contains("Error during pre-loading phase: ERROR: File null is not a valid mod file") ||
+                run.output.contains("Caused by: java.io.IOException: Invalid paths argument, contained no existing paths")
     }
 
     def "configuring of the configurations after the dependencies block should work"() {
@@ -32,15 +79,15 @@ class RunTests extends BuilderBasedTestSpecification {
                     resources.setSrcDirs(['src/main/modResources'])
                 }
             }
-            
-            runs {
-                client {
-                    modSource sourceSets.modRun
-                }
-            }
-            
+                        
             dependencies {
                 implementation "net.neoforged:neoforge:+"
+            }
+            
+            runs {
+                data {
+                    modSource project.sourceSets.main
+                }
             }
             
             configurations {
@@ -220,7 +267,7 @@ class RunTests extends BuilderBasedTestSpecification {
             }
             
             configurations {
-                runRuntime
+                runRuntime { }
             }
             
             dependencies {
@@ -245,6 +292,8 @@ class RunTests extends BuilderBasedTestSpecification {
         when:
         def run = project.run {
             it.tasks(':writeMinecraftClasspathClient')
+            it.stacktrace()
+            
         }
 
         then:
@@ -282,7 +331,7 @@ class RunTests extends BuilderBasedTestSpecification {
             }
             
             configurations {
-                runRuntime
+                runRuntime { }
             }
             
             dependencies {
@@ -320,5 +369,255 @@ class RunTests extends BuilderBasedTestSpecification {
         classpathFile.exists()
 
         classpathFile.text.contains("org.jgrapht${File.separator}jgrapht-core")
+    }
+
+    @Override
+    protected File getTestTempDirectory() {
+        return new File("build", "unit-testing-2")
+    }
+
+    def "userdev supports unit testing"() {
+        given:
+        def project = create("userdev_supports_unit_tests", {
+            it.build("""
+            java {
+                toolchain {
+                    languageVersion = JavaLanguageVersion.of(21)
+                }
+            }
+            
+            repositories {
+                mavenCentral()
+            }
+            
+            runs {
+                junit {
+                    modSource project.sourceSets.main
+                    unitTestSource project.sourceSets.test
+                }
+            }
+            
+            test {
+                useJUnitPlatform()
+            }
+            
+            dependencies {
+                implementation 'net.neoforged:neoforge:+'
+                
+                testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.1'
+                testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.1'
+            }
+            """)
+            //We need to add a manifest.mf file to the test source set
+            it.file("src/test/resources/META-INF/MANIFEST.MF", """Manifest-Version: 1.0
+            |FMLModType: GAMELIBRARY
+            |""".stripMargin())
+
+            it.file("src/test/java/net/test/TestTest.java",
+                    """
+                    package net.test;
+                    
+                    import net.minecraft.server.MinecraftServer;
+                    import net.minecraft.tags.ItemTags;
+                    import net.minecraft.world.item.Items;
+                    import net.minecraft.world.item.crafting.Ingredient;
+                    import net.neoforged.testframework.junit.EphemeralTestServerProvider;
+                    import org.junit.jupiter.api.Assertions;
+                    import org.junit.jupiter.api.Test;
+                    import org.junit.jupiter.api.extension.ExtendWith;
+                    import net.minecraft.core.registries.Registries;
+                    
+                    @ExtendWith(EphemeralTestServerProvider.class)
+                    public class TestTest {
+                        @Test
+                        public void testIngredient(MinecraftServer server) { // required to load tags
+                            Assertions.assertTrue(
+                                    Ingredient.of(server.registryAccess().lookupOrThrow(Registries.ITEM).getOrThrow(ItemTags.AXES)).test(Items.DIAMOND_AXE.getDefaultInstance())
+                            );
+                        }
+                    }
+                    """.trim())
+            it.withToolchains()
+            it.withGlobalCacheDirectory(tempDir)
+        })
+
+        when:
+        def run = project.run {
+            it.tasks(":testJunit")
+        }
+
+        then:
+        run.task(':testJunit').outcome == TaskOutcome.SUCCESS
+    }
+
+    def "runs with no modsource create problem"() {
+        given:
+        def project = create("runs_with_no_modsource_create_problem", {
+            it.property('neogradle.subsystems.conventions.runs.enabled', 'false')
+            it.property('neogradle.subsystems.conventions.sourcesets.enabled', 'false')
+            it.build("""
+            java {
+                toolchain {
+                    languageVersion = JavaLanguageVersion.of(21)
+                }
+            }
+            
+            repositories {
+                mavenCentral()
+            }
+            
+            dependencies {
+                implementation 'net.neoforged:neoforge:+'
+            }
+            
+            runs {
+                client {
+                    // no modsource
+                }
+            }
+            
+            """)
+            it.withToolchains()
+            it.withGlobalCacheDirectory(tempDir)
+        })
+
+        when:
+        def run = project.run {
+            it.tasks(':dependencies')
+            it.shouldFail()
+        }
+
+        then:
+        run.getOutput().contains("(Run: client) The run: client has no source sets configured.")
+    }
+
+    def "runs can inherit from each other"() {
+        given:
+        def project = create("runs_can_inherit_from_each_other", {
+            it.property('neogradle.subsystems.conventions.runs.enabled', 'false')
+            it.build("""
+            java {
+                toolchain {
+                    languageVersion = JavaLanguageVersion.of(21)
+                }
+            }
+            
+            repositories {
+                mavenCentral()
+            }
+            
+            dependencies {
+                implementation 'net.neoforged:neoforge:+'
+            }
+            
+            runs {
+                client {
+                }
+            
+                clientTwo {
+                    configure runs.client
+                }
+                
+                clientThree {
+                    run 'clientTwo'                
+                }
+            }
+            
+            """)
+            it.withToolchains()
+            it.withGlobalCacheDirectory(tempDir)
+        })
+
+        when:
+        def run = project.run {
+            it.tasks(':runs')
+            it.stacktrace()
+        }
+
+        then:
+        def lines = run.getOutput().split("\n");
+        def firstRunIndex = lines.findIndexOf { line -> line.startsWith("Run: client")}
+        def secondRunIndex = lines.findIndexOf { line -> line.startsWith("Run: clientTwo")}
+        def thirdRunIndex = lines.findIndexOf { line -> line.startsWith("Run: clientThree")}
+        def endIndex = lines.findIndexOf { line -> line.startsWith("BUILD SUCCESSFUL")}
+
+        def indexes = [firstRunIndex + 1, secondRunIndex + 1, thirdRunIndex + 1, endIndex]
+        indexes.sort()
+
+        def firstSection = lines[indexes[0]..indexes[1] - 2]
+        def secondSection = lines[indexes[1]..indexes[2] - 2]
+        def thirdSection = lines[indexes[2]..indexes[3] - 2]
+
+        //Check if all the runs are the same
+        firstSection == secondSection
+        secondSection == thirdSection
+        thirdSection == firstSection
+    }
+
+    def "runs use a working directory named after them by default"() {
+        given:
+        def project = create("runs_have_configurable_working_directories_with_default", {
+            it.property('neogradle.subsystems.conventions.runs.enabled', 'false')
+            it.build("""
+            java {
+                toolchain {
+                    languageVersion = JavaLanguageVersion.of(21)
+                }
+            }
+            
+            repositories {
+                mavenCentral()
+            }
+            
+            dependencies {
+                implementation 'net.neoforged:neoforge:+'
+            }
+            
+            runs {
+                aClient {
+                    runType 'client'
+                }
+            
+                bClient {
+                    runType 'client'
+                }
+                
+                cClient {
+                    runType 'client'
+                    
+                    workingDirectory project.file("clientThree")                
+                }
+            }
+            
+            """)
+            it.withToolchains()
+            it.withGlobalCacheDirectory(tempDir)
+        })
+
+        when:
+        def run = project.run {
+            it.tasks(':runs')
+            it.stacktrace()
+        }
+
+        then:
+        def lines = run.getOutput().split("\n");
+        def firstRunIndex = lines.findIndexOf { line -> line.startsWith("Run: aClient")}
+        def secondRunIndex = lines.findIndexOf { line -> line.startsWith("Run: bClient")}
+        def thirdRunIndex = lines.findIndexOf { line -> line.startsWith("Run: cClient")}
+        def endIndex = lines.findIndexOf { line -> line.startsWith("BUILD SUCCESSFUL")}
+
+        def indexes = [firstRunIndex + 1, secondRunIndex + 1, thirdRunIndex + 1, endIndex]
+        indexes.sort()
+
+        def firstSection = lines[indexes[0]..indexes[1] - 2]
+        def secondSection = lines[indexes[1]..indexes[2] - 2]
+        def thirdSection = lines[indexes[2]..indexes[3] - 2]
+
+        def prefix = "Working Directory:"
+
+        firstSection.find { it.contains(prefix) }.toString().replace(prefix, "").trim().endsWith("runs_have_configurable_working_directories_with_default/runs/aClient".replace("/", File.separator))
+        secondSection.find { it.contains(prefix) }.toString().replace(prefix, "").trim().endsWith("runs_have_configurable_working_directories_with_default/runs/bClient".replace("/", File.separator))
+        thirdSection.find { it.contains(prefix) }.toString().replace(prefix, "").trim().endsWith("runs_have_configurable_working_directories_with_default/clientThree".replace("/", File.separator))
     }
 }
